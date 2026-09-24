@@ -1,5 +1,5 @@
 [Unit]
-Description=Private Linko development control panel
+Description=Private multi-project Git development panel
 After=network-online.target
 Wants=network-online.target
 

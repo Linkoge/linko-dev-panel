@@ -1,65 +1,67 @@
-# Linko Dev Panel
+# Dev Panel
 
-A small, private web panel for the Linko website. It shows Git status,
-previews the current website, reviews diffs, commits and pushes changes, pulls
-fast-forward updates, and browses and compares earlier commits. It uses only the
-Python standard library.
+A small, mobile-friendly Git project manager for explicitly configured local repositories. It uses Python's standard library and keeps this panel in its own repository. It does not copy managed repositories into the panel directory.
 
-The panel operates on the separate Linko website repository at
-`/home/mint1/projects/Linko`. That path is currently set in `server.py`; edit
-`REPO` there if the website lives elsewhere. This repository contains the panel,
-not a copy of the website.
+## Architecture
 
-## Screenshots
+- `projects.json` is the allowlist of repositories. The server loads and validates it at startup.
+- `repository.py` contains repository-specific Git operations. Every operation runs from the selected configured repository root.
+- `server.py` handles HTTP, request validation, confirmation tokens, and preview files.
+- `index.html` is the phone-friendly interface. The selected project is remembered in the browser.
 
-These screenshots show the panel UI with a captured Git status response. They
-were rendered from the project HTML without starting the HTTP server.
+The current configuration manages `/home/mint1/projects/Linko` and this panel at `/home/mint1/projects/dev-panel`. Linko has a website preview; Dev Panel has none. The project selector controls status, files, diff, history, commit, push, pull, discard, restore, and historical checkout. Unknown project names and arbitrary paths are rejected by the server.
 
-| Desktop | Mobile |
-| --- | --- |
-| ![Linko Dev Panel desktop view](screenshots/panel-desktop.png) | ![Linko Dev Panel mobile view](screenshots/panel-mobile.png) |
+## Run
 
-## Requirements
-
-- Python 3.10 or newer and Git
-- A checked-out Linko website Git repository at the `REPO` path in `server.py`
-- GitHub access for that website repository if using Save to GitHub or Pull
-
-## Run locally
+Requires Python 3.10 or newer, Git, and the configured repositories checked out locally.
 
 ```bash
 LINKO_PANEL_HOST=127.0.0.1 ./start.sh
 ```
 
-Open <http://127.0.0.1:8765/>. Run this from the `dev-panel` directory. The
-panel is also available at `/panel` and `/dev-panel`; `/preview` opens the
-current website preview at `/preview/xsecret.html`.
+Open <http://127.0.0.1:8765/>. On the Mint machine, the default bind address is `100.65.36.48` for Tailscale access. `LINKO_PANEL_HOST`, `LINKO_PANEL_PORT`, and `LINKO_PANEL_ALLOWED_HOSTS` (comma-separated extra hostnames) are the available environment settings.
 
-On the original Mint machine, `./start.sh` binds to its configured Tailscale
-address, `100.65.36.48`, by default. Open `http://100.65.36.48:8765` from an
-authorized device on the same tailnet. Change `LINKO_PANEL_HOST` if its
-Tailscale address changes.
+## Add a repository
 
-Historical previews use committed files and do not change the working tree or
-current browser tab. Entering or leaving historical mode requires a clean
-working tree. The panel never automatically commits, stashes, or discards work.
+Add an entry to `projects.json`, then restart the service. The path must be an absolute path to a Git repository root. Only entries in this file can be selected or used by Git operations.
 
-The Save action commits and pushes changes in the **Linko website repository**,
-not in this panel repository. Check its remote and Git credentials before using
-that action.
+```json
+{
+  "projects": {
+    "Linko": {
+      "path": "/home/mint1/projects/Linko",
+      "remote": "origin",
+      "preview": "xsecret.html"
+    },
+    "Dev Panel": {
+      "path": "/home/mint1/projects/dev-panel",
+      "remote": "origin"
+    },
+    "Another Project": {
+      "path": "/home/mint1/projects/another-project",
+      "remote": "origin"
+    }
+  }
+}
+```
 
-## Configuration
+`remote` defaults to `origin`. Set it to `null` for a local-only repository; Push will be unavailable and ahead/behind will not be reported. The optional `preview` is a relative HTML file path inside the repository. Omit it for projects without a website. Preview and historical preview serve only common web asset file types, reject hidden paths and paths outside the configured repository, and are unavailable for projects without `preview`.
 
-- `LINKO_PANEL_HOST`: bind address (default `100.65.36.48`)
-- `LINKO_PANEL_PORT`: port (default `8765`)
-- `LINKO_PANEL_ALLOWED_HOSTS`: optional comma-separated extra HTTP hostnames,
-  useful for a Tailscale MagicDNS name
+Ahead/behind compares against the selected branch's upstream on the configured remote, or the matching local remote-tracking branch if no upstream is set. It uses local tracking data; it does not fetch automatically, so it may be stale until a pull or external fetch. Push targets the configured remote and current branch. Pull requires an upstream on that remote and uses `--ff-only`.
 
-## Optional systemd user service
+## Git and version actions
 
-The included service is only a template; it is not installed or enabled. Edit
-its `WorkingDirectory` and `ExecStart` paths if you cloned this repository to a
-different location.
+- **Commit changes** reviews the file list and creates a local commit. **Push commits** is a separate action; neither operation runs automatically.
+- **View changes** displays the tracked diff and lists untracked files. **Discard current changes** reviews and restores only listed unstaged tracked files. Staged and untracked files remain.
+- **History** loads recent commits and can compare each with the current branch. For preview-enabled projects, **View version** opens committed website files without changing the working tree.
+- **Check out version** preserves the older detached-HEAD browsing flow. It requires a clean working tree; **Return to current** switches back to the original branch. Commit, push, pull, and discard are disabled while detached.
+- **Restore version** requires a clean working tree. The confirmation shows the target commit, current commit, and files that will change. It creates a new commit with the target's tree on the current branch. The old commit and later history remain available, so an accidental restore can be recovered with another restore. It does not push automatically.
+
+The panel never silently deletes uncommitted work during version checkout or restore. Commit review tokens expire after five minutes and are tied to a single project and Git state.
+
+## Service
+
+The included `linko-dev-panel.service` is a systemd user service template. Its paths match this checkout. To install it:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -68,19 +70,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now linko-dev-panel.service
 ```
 
-Check it with `systemctl --user status linko-dev-panel.service`. To start it
-at boot even before interactive login, user lingering may need to be enabled by
-an administrator (`sudo loginctl enable-linger "$USER"`).
+After changing Python, HTML, or `projects.json`, restart the running service with `systemctl --user restart linko-dev-panel.service`. If only the service file changes, copy it again and run `systemctl --user daemon-reload` before restarting.
 
-## Access and safety
+## Access
 
-The server has no arbitrary-command endpoint. Git subprocesses use fixed
-argument arrays and the fixed `/home/mint1/projects/Linko` repository directory.
-Commit IDs are restricted to hexadecimal Git hashes and resolved as commit
-objects before use. Mutating requests require a per-process CSRF token; save and
-discard also require a short-lived review token.
-
-There is no login screen or TLS. Anyone who can reach this port over the
-Tailscale network can view the repository preview and use the controls. Use
-Tailscale ACLs/grants and the host firewall to restrict access further if your
-tailnet includes people or devices you do not fully trust.
+The panel has no login or TLS. Anyone who can reach its port over the network can use the controls. Restrict access with Tailscale ACLs or a firewall. Mutating requests use a per-process CSRF token and an origin check. There is no endpoint to supply a repository path or arbitrary Git command.

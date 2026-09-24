@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#160805">
-  <title>Linko Dev</title>
+  <title>Dev Panel</title>
   <style>
     :root { color-scheme: dark; --bg:#120704; --card:#21100a; --line:#542819; --text:#fff0e7; --muted:#c8947c; --blue:#ff7043; --green:#ff9a55; --red:#ff5d3b; --amber:#ffad5c; }
     * { box-sizing:border-box; }
@@ -34,6 +34,7 @@
     .button { display:flex; align-items:center; justify-content:center; }
     .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
     label { display:block; margin-bottom:7px; color:var(--muted); font-size:13px; }
+    select { width:100%; min-height:48px; border:1px solid #65311f; border-radius:12px; padding:10px; background:#160905; color:var(--text); font:16px system-ui,sans-serif; }
     input { width:100%; min-height:48px; border:1px solid #65311f; border-radius:12px; padding:12px; background:#160905; color:var(--text); font:16px system-ui,sans-serif; outline:none; }
     input:focus { border-color:var(--blue); }
     #notice { display:none; white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -66,13 +67,14 @@
 </head>
 <body>
 <main>
-  <header><h1>LINKO DEV</h1><span class="online" id="online">● Connecting</span></header>
+  <header><h1>DEV PANEL</h1><span class="online" id="online">● Connecting</span></header>
+  <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
 
   <section class="card historical hidden" id="historical">
     <h2>VIEWING HISTORICAL VERSION</h2>
     <div class="commit-meta"><code id="historicalHash"></code><br><strong id="historicalSubject"></strong><br><small class="muted" id="historicalDate"></small></div>
     <div class="historical-actions">
-      <a class="button primary" href="/preview/xsecret.html" target="_blank" rel="noopener">OPEN WEBSITE</a>
+      <a class="button primary" id="historicalPreview" target="_blank" rel="noopener">OPEN WEBSITE</a>
       <button id="historicalCompare">COMPARE WITH CURRENT</button>
       <button class="danger" id="returnCurrent">RETURN TO CURRENT</button>
     </div>
@@ -80,11 +82,12 @@
 
   <section class="card">
     <h2 class="status-heading" id="statusHeading">CHECKING LOCAL CHANGES…</h2>
+    <div class="muted" style="margin-bottom:8px">Branch: <strong id="branch">—</strong><br><span id="remoteSummary">—</span></div>
     <ul class="files" id="files"></ul>
     <details class="repository-details">
       <summary>Repository details</summary>
       <div class="meta">
-        <span class="muted">Branch</span><strong id="branch">—</strong>
+        <span class="muted">Project</span><strong id="projectName">—</strong>
         <span class="muted">Changes</span><strong id="tree">—</strong>
         <span class="muted">Upstream</span><strong id="upstream">—</strong>
         <span class="muted">Remote</span><strong id="remote">—</strong>
@@ -92,15 +95,16 @@
     </details>
   </section>
 
-  <a class="button primary" id="normalPreview" href="/preview/xsecret.html" target="_blank" rel="noopener">OPEN WEBSITE PREVIEW</a>
+  <a class="button primary" id="normalPreview" target="_blank" rel="noopener">OPEN WEBSITE PREVIEW</a>
 
   <section class="card" id="gitActions">
     <label for="message">Commit message</label>
     <input id="message" maxlength="200" autocomplete="off" placeholder="Mobile development checkpoint">
-    <button class="primary" id="save" style="margin-top:10px">SAVE TO GITHUB</button>
+    <button class="primary" id="save" style="margin-top:10px">COMMIT CHANGES</button>
     <div class="grid">
       <button id="changes">VIEW CHANGES</button>
-      <button id="pull">PULL FROM GITHUB</button>
+      <button id="push">PUSH COMMITS</button>
+      <button id="pull">PULL UPDATES</button>
     </div>
     <button class="danger" id="discard" style="margin-top:10px">DISCARD CURRENT CHANGES</button>
   </section>
@@ -124,14 +128,22 @@
   let csrf = '';
   let historicalMode = null;
   let historyOffset = 0;
+  let selectedProject = '';
+  let currentPreviewUrl = null;
+  let viewGeneration = 0;
+  const projectParam = () => `project=${encodeURIComponent(selectedProject)}`;
+  const siteUrl = () => currentPreviewUrl;
+  const versionUrl = hash => `/versions/${encodeURIComponent(selectedProject)}/${hash}/preview/${currentPreviewUrl.split('/preview/')[1]}`;
   const $ = id => document.getElementById(id);
   const buttons = () => [...document.querySelectorAll('button')];
   const applyMode = () => {
-    ['save', 'pull', 'discard'].forEach(id => $(id).disabled = Boolean(historicalMode));
+    ['save', 'push', 'pull', 'discard'].forEach(id => $(id).disabled = Boolean(historicalMode));
+    document.querySelectorAll('[data-action="restore"]').forEach(button => button.disabled = Boolean(historicalMode));
     $('message').disabled = Boolean(historicalMode);
   };
   const setBusy = value => {
     buttons().forEach(button => { if (!button.closest('dialog')) button.disabled = value; });
+    $('project').disabled = value;
     if (!value) applyMode();
   };
   const escapeText = value => String(value ?? '');
@@ -150,6 +162,10 @@
       init.headers['X-Linko-CSRF'] = csrf;
       init.body = JSON.stringify(options.body || {});
     }
+    if (selectedProject && path.startsWith('/api/') && path !== '/api/projects') {
+      if (init.method === 'POST') init.body = JSON.stringify({...options.body, project:selectedProject});
+      else path += `${path.includes('?') ? '&' : '?'}${projectParam()}`;
+    }
     const response = await fetch(path, init);
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error([data.error, data.output].filter(Boolean).join('\n'));
@@ -159,13 +175,20 @@
   function renderStatus(data) {
     if (data.csrfToken) csrf = data.csrfToken;
     $('online').textContent = '● Server online';
+    $('projectName').textContent = data.project;
     $('branch').textContent = data.branch;
     $('tree').textContent = `${data.tracked.length} tracked · ${data.untracked.length} untracked`;
     $('upstream').textContent = data.upstream || 'Not configured';
-    $('remote').textContent = data.originMain.label;
+    $('remote').textContent = data.remote.label;
+    $('remoteSummary').textContent = data.remote.label;
     historicalMode = data.historical;
     $('historical').classList.toggle('hidden', !historicalMode);
-    $('normalPreview').classList.toggle('hidden', Boolean(historicalMode));
+    $('normalPreview').classList.toggle('hidden', Boolean(historicalMode) || !data.preview);
+    $('historicalPreview').classList.toggle('hidden', !data.preview);
+    if (data.preview) {
+      $('normalPreview').href = siteUrl();
+      if (historicalMode) $('historicalPreview').href = versionUrl(historicalMode.fullHash);
+    }
     $('gitActions').classList.toggle('hidden', Boolean(historicalMode));
     if (historicalMode) {
       $('historicalHash').textContent = historicalMode.hash;
@@ -183,7 +206,7 @@
     files.replaceChildren();
     data.localChanges.forEach(file => {
       const li = document.createElement('li');
-      const path = document.createElement('strong'); path.textContent = file.path;
+      const path = document.createElement('strong'); path.textContent = `${file.status}  ${file.path}`;
       const modified = document.createElement('small'); modified.className = 'muted';
       if (file.mtime == null) {
         modified.textContent = file.status.includes('D') ? 'Deleted locally' : 'Modified time unavailable';
@@ -208,7 +231,13 @@
   }
 
   async function refresh() {
-    try { renderStatus(await api('/api/status')); await loadHistory(true); }
+    const generation = viewGeneration;
+    try {
+      const status = await api('/api/status');
+      if (generation !== viewGeneration) return;
+      renderStatus(status);
+      await loadHistory(true, generation);
+    }
     catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
   }
 
@@ -236,21 +265,24 @@
     const date = document.createElement('small'); date.textContent = formatDate(commit.date); info.append(date);
     const actions = document.createElement('div'); actions.className = 'commit-actions';
     const view = document.createElement('a'); view.className = 'button'; view.textContent = 'VIEW VERSION';
-    view.href = `/history-preview/${commit.fullHash}/preview/xsecret.html`;
+    view.href = currentPreviewUrl ? versionUrl(commit.fullHash) : '#';
     view.target = '_blank'; view.rel = 'noopener noreferrer';
-    view.onclick = () => { setTimeout(() => window.focus(), 0); };
     const compare = document.createElement('button'); compare.textContent = 'COMPARE WITH CURRENT'; compare.onclick = () => compareCommit(commit.fullHash);
-    actions.append(view, compare); row.append(hash, info, actions);
+    const restore = document.createElement('button'); restore.textContent = 'RESTORE VERSION'; restore.dataset.action = 'restore'; restore.disabled = Boolean(historicalMode); restore.onclick = () => restoreCommit(commit.fullHash);
+    const checkout = document.createElement('button'); checkout.textContent = 'CHECK OUT VERSION'; checkout.onclick = () => checkoutCommit(commit.fullHash);
+    if (currentPreviewUrl) actions.append(view);
+    actions.append(compare, restore, checkout); row.append(hash, info, actions);
     return row;
   }
 
-  async function loadHistory(reset = false) {
+  async function loadHistory(reset = false, generation = viewGeneration) {
     if (reset) {
       historyOffset = 0;
       $('commits').replaceChildren();
       $('commits').className = 'muted';
     }
     const data = await api(`/api/history?offset=${historyOffset}`);
+    if (generation !== viewGeneration) return;
     if (reset) $('commits').className = '';
     data.commits.forEach(commit => $('commits').append(renderCommit(commit)));
     historyOffset = data.nextOffset;
@@ -321,27 +353,60 @@
     finally { setBusy(false); }
   };
 
+  async function restoreCommit(hash) {
+    setBusy(true);
+    try {
+      const prepared = await api('/api/restore/prepare', {method:'POST', body:{commit:hash}});
+      const text = document.createElement('p'); text.className = 'warning'; text.textContent = prepared.warning;
+      const refs = document.createElement('p'); refs.textContent = `Current: ${prepared.current.hash} ${prepared.current.subject} → Target: ${prepared.target.hash} ${prepared.target.subject}`;
+      const files = prepared.files.map(f => `${f.status} ${f.label}`);
+      const ok = await confirmDialog('Restore selected version?', [refs, text, listBlock('Files that will change', files)], 'CREATE RESTORE COMMIT', true);
+      if (!ok) return;
+      const result = await api('/api/restore/confirm', {method:'POST', body:{confirmation:prepared.confirmation}});
+      notice(result.output || 'Restore commit created.'); await refresh();
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  }
+
+  async function checkoutCommit(hash) {
+    const text = document.createElement('p'); text.textContent = 'Check out this commit as a historical working tree? The branch stays at its current commit. A clean working tree is required.';
+    if (!await confirmDialog('Check out historical version', [text], 'CHECK OUT')) return;
+    setBusy(true);
+    try { const result = await api('/api/history/view', {method:'POST', body:{commit:hash}}); notice(result.output); await refresh(); }
+    catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  }
+
   $('save').onclick = async () => {
     setBusy(true);
     try {
-      const prepared = await api('/api/save/prepare', {method:'POST', body:{message:$('message').value}});
-      const files = [...prepared.tracked.map(f => `${f.status} ${f.path}`), ...prepared.untracked.map(path => `?? ${path}`)];
+      const prepared = await api('/api/commit/prepare', {method:'POST', body:{message:$('message').value}});
+      const files = prepared.files.map(f => `${f.status} ${f.path}`);
       const msg = document.createElement('p'); msg.textContent = `Commit message: ${prepared.message}`;
-      const ok = await confirmDialog('Commit and push these files?', [msg, listBlock('Files', files)], 'COMMIT + PUSH');
+      const ok = await confirmDialog('Commit these files?', [msg, listBlock('Files', files)], 'COMMIT');
       if (!ok) return;
-      notice('Saving to GitHub…');
-      const result = await api('/api/save/confirm', {method:'POST', body:{confirmation:prepared.confirmation}});
-      notice(result.output || 'Committed and pushed successfully.');
+      notice('Creating commit…');
+      const result = await api('/api/commit/confirm', {method:'POST', body:{confirmation:prepared.confirmation}});
+      notice(result.output || 'Commit created. Use Push commits to publish it.');
       $('message').value = '';
       await refresh();
     } catch (error) { notice(error.message, true); }
     finally { setBusy(false); }
   };
 
+  $('push').onclick = async () => {
+    const text = document.createElement('p'); text.textContent = `Push the current branch of ${selectedProject} to its configured remote?`;
+    if (!await confirmDialog('Push commits', [text], 'PUSH')) return;
+    setBusy(true); notice('Pushing commits…');
+    try { const result = await api('/api/push', {method:'POST'}); notice(result.output || 'Push completed.'); await refresh(); }
+    catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
   $('pull').onclick = async () => {
     const text = document.createElement('p'); text.textContent = 'Run git pull --ff-only? A divergent history will be reported, not merged.';
-    if (!await confirmDialog('Pull from GitHub', [text], 'PULL')) return;
-    setBusy(true); notice('Pulling from GitHub…');
+    if (!await confirmDialog('Pull updates', [text], 'PULL')) return;
+    setBusy(true); notice('Pulling updates…');
     try { const result = await api('/api/pull', {method:'POST'}); notice(result.output || 'Pull completed.'); await refresh(); }
     catch (error) { notice(error.message, true); }
     finally { setBusy(false); }
@@ -383,7 +448,36 @@
     finally { setBusy(false); }
   };
 
-  refresh();
+  async function start() {
+    try {
+      const data = await api('/api/projects');
+      csrf = data.csrfToken;
+      for (const item of data.projects) {
+        const option = document.createElement('option'); option.value = item.name; option.textContent = item.name;
+        option.dataset.previewUrl = item.previewUrl || ''; $('project').append(option);
+      }
+      const stored = localStorage.getItem('devPanelProject');
+      selectedProject = data.projects.some(p => p.name === stored) ? stored : data.projects[0].name;
+      $('project').value = selectedProject;
+      updatePreview();
+      await refresh();
+    } catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
+  }
+
+  function updatePreview() {
+    currentPreviewUrl = $('project').selectedOptions[0]?.dataset.previewUrl || null;
+  }
+
+  $('project').onchange = async () => {
+    viewGeneration += 1;
+    selectedProject = $('project').value;
+    localStorage.setItem('devPanelProject', selectedProject);
+    updatePreview();
+    $('notice').className = 'card';
+    await refresh();
+  };
+
+  start();
 </script>
 </body>
 </html>

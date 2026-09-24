@@ -1,0 +1,13 @@
+{
+  "projects": {
+    "Linko": {
+      "path": "/home/mint1/projects/Linko",
+      "remote": "origin",
+      "preview": "xsecret.html"
+    },
+    "Dev Panel": {
+      "path": "/home/mint1/projects/dev-panel",
+      "remote": "origin"
+    }
+  }
+}
