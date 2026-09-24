@@ -411,7 +411,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed_url.path
         query = parse_qs(parsed_url.query)
         try:
-            if path in {"/", "/index.html"}:
+            if path in {"/", "/index.html", "/panel", "/panel/", "/dev-panel", "/dev-panel/"}:
                 self.serve_file(PANEL_DIR / "index.html", panel=True)
             elif path == "/api/status":
                 self.send_json({"ok": True, **status_payload(include_csrf=True)})
@@ -442,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                 item = files[index]
                 diff = git("diff", "--no-ext-diff", "--no-color", commit, current_ref, "--", *item["paths"])
                 self.send_json({"ok": True, "file": item, "diff": diff or "No textual diff is available for this file."})
-            elif path == "/preview" or path == "/preview/":
+            elif path in {"/preview", "/preview/", "/preview/index.html"}:
                 self.send_response(HTTPStatus.FOUND)
                 self.send_header("Location", "/preview/xsecret.html")
                 self.send_security_headers()

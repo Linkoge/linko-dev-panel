@@ -18,6 +18,8 @@ automatically commit, stash, discard, or delete them.
 ```
 
 Then open `http://100.65.36.48:8765` from a device on the same Tailscale network.
+The panel is also available at `/panel` and `/dev-panel`; `/preview` opens the
+current website preview.
 
 To test locally without binding to Tailscale:
 
