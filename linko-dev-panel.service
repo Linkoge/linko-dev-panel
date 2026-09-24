@@ -10,6 +10,7 @@ ExecStart=/usr/bin/python3 /home/mint1/projects/dev-panel/server.py
 Environment=PYTHONUNBUFFERED=1
 Environment=LINKO_PANEL_HOST=100.65.36.48
 Environment=LINKO_PANEL_PORT=8765
+Environment=LINKO_PANEL_NODE=/home/mint1/.nvm/versions/node/v24.21.0/bin/node
 Restart=on-failure
 RestartSec=3
 

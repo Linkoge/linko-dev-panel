@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import server
 from repository import Project, load_projects
@@ -44,6 +46,7 @@ class PanelTests(unittest.TestCase):
     def request(self, method, path, body=None):
         handler = server.Handler.__new__(server.Handler)
         handler.path = path
+        handler.server = SimpleNamespace(server_address=("127.0.0.1", 8765))
         handler.headers = {"Host": "127.0.0.1"}
         handler.wfile = BytesIO()
         handler.rfile = BytesIO(json.dumps(body).encode() if body is not None else b"")
@@ -66,7 +69,7 @@ class PanelTests(unittest.TestCase):
     def test_allowlist_and_preview(self):
         status, projects = self.request("GET", "/api/projects")
         self.assertEqual(200, status)
-        self.assertEqual("1.1", projects["version"])
+        self.assertEqual("1.2", projects["version"])
         self.assertEqual(400, self.request("GET", "/api/status?project=/tmp")[0])
         self.assertEqual(200, self.request("GET", "/site/One/preview/index.html")[0])
         self.assertEqual(200, self.request("GET", f"/versions/One/{self.initial}/preview/index.html")[0])
@@ -83,6 +86,22 @@ class PanelTests(unittest.TestCase):
         (self.repo / "subdir").mkdir()
         with self.assertRaises(ValueError):
             load_projects(config)
+
+    def test_screenshot_routes_use_configured_project_and_existing_security(self):
+        status, projects = self.request("GET", "/api/projects")
+        self.assertEqual(["index.html"], projects["projects"][0]["capturePages"])
+        self.assertEqual(200, self.request("GET", "/api/screenshots?project=One")[0])
+        self.assertEqual(404, self.request("GET", "/api/screenshots/image?project=One&file=../secret.png")[0])
+        with patch("server.screenshots.start") as start:
+            status, _ = self.request("POST", "/api/screenshots/capture", {
+                "project": "One", "page": "index.html", "devices": "mobile", "overlap": 20})
+            self.assertEqual(202, status)
+            self.assertEqual("http://127.0.0.1:8765", start.call_args.args[2])
+        self.assertEqual(400, self.request("POST", "/api/screenshots/capture", {
+            "project": "Unknown", "page": "index.html", "devices": "mobile"})[0])
+        with patch("server.screenshots.clear") as clear:
+            self.assertEqual(200, self.request("POST", "/api/screenshots/clear", {"project": "One"})[0])
+            clear.assert_called_once_with(self.project)
 
     def test_commit_push_pull_and_relationship(self):
         (self.repo / "index.html").write_text("updated\n")

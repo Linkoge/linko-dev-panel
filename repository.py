@@ -27,6 +27,7 @@ class Project:
     path: Path
     remote: str | None
     preview: str | None
+    capture_pages: tuple[str, ...] = ()
 
     def run(self, *args: str, timeout: int = 30, check: bool = True) -> str:
         command = ["git", *args]
@@ -274,11 +275,24 @@ def load_projects(config_path: Path) -> dict[str, Project]:
         preview = value.get("preview")
         if remote is not None and (not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", remote)):
             raise ValueError(f"{name}: invalid remote name.")
-        if preview is not None and (not isinstance(preview, str) or not preview or
-                                    Path(preview).is_absolute() or any(p in (".", "..") or p.startswith(".") for p in Path(preview).parts) or
-                                    Path(preview).suffix.lower() != ".html"):
+        def valid_page(page: object) -> bool:
+            return (isinstance(page, str) and bool(page) and not Path(page).is_absolute()
+                    and all(p not in (".", "..") and not p.startswith(".") and "\\" not in p
+                            for p in Path(page).parts)
+                    and Path(page).suffix.lower() == ".html")
+        if preview is not None and not valid_page(preview):
             raise ValueError(f"{name}: preview must be a visible relative HTML path.")
-        project = Project(name, path, remote, preview)
+        extra_pages = value.get("capturePages", [])
+        if not isinstance(extra_pages, list) or any(not valid_page(page) for page in extra_pages):
+            raise ValueError(f"{name}: capturePages must contain visible relative HTML paths.")
+        if extra_pages and not preview:
+            raise ValueError(f"{name}: capturePages requires a preview entry.")
+        pages = tuple(dict.fromkeys(([preview] if preview else []) + extra_pages))
+        for page in pages:
+            candidate = (path / page).resolve()
+            if not candidate.is_relative_to(path) or not candidate.is_file():
+                raise ValueError(f"{name}: capture page does not exist inside the project: {page}")
+        project = Project(name, path, remote, preview, pages)
         top = project.run("rev-parse", "--show-toplevel").strip()
         if Path(top).resolve() != path:
             raise ValueError(f"{name}: path must be a Git repository root.")

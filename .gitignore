@@ -34,6 +34,8 @@ id_rsa*
 id_ed25519*
 
 # Runtime output
+screenshots/
+node_modules/
 *.log
 *.pid
 *.sqlite

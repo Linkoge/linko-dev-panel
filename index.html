@@ -62,6 +62,34 @@
     .modal-body { padding:18px; overflow:auto; max-height:85vh; }
     pre { margin:12px 0; padding:12px; max-height:55vh; overflow:auto; border:1px solid var(--line); border-radius:10px; background:#120704; color:#ffe1d2; font:12px/1.5 ui-monospace,SFMono-Regular,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
     .warning { color:var(--amber); }
+    .view-tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0; }
+    .view-tabs button { min-height:44px; padding:9px; }
+    .view-tabs button.active { background:#703019; border-color:var(--blue); color:#fff; }
+    .capture-options { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:6px 0 14px; }
+    .capture-options label { margin:0; }
+    .capture-options input { position:absolute; opacity:0; width:1px; height:1px; }
+    .capture-options span { display:block; min-height:46px; padding:12px 4px; border:1px solid var(--line); border-radius:11px; text-align:center; color:var(--text); font-weight:700; }
+    .capture-options input:checked + span { background:#703019; border-color:var(--blue); }
+    .capture-options input:focus-visible + span { outline:2px solid white; }
+    input[type=range] { padding:0; min-height:30px; accent-color:var(--blue); }
+    .capture-advanced { margin:12px 0; }
+    .capture-advanced summary { color:var(--muted); cursor:pointer; }
+    .capture-advanced input { margin-top:5px; }
+    .shot-toolbar { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:12px 0; }
+    .shot-group { margin-top:20px; }
+    .shot-group h3 { font-size:14px; letter-spacing:.12em; color:var(--amber); }
+    .shot-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .shot-item { min-width:0; padding:7px; border:1px solid var(--line); border-radius:12px; background:#160905; }
+    .shot-open { display:block; width:100%; min-height:0; padding:0; border:0; border-radius:7px; overflow:hidden; background:#0b0503; }
+    .shot-open img { display:block; width:100%; height:138px; object-fit:contain; }
+    .shot-meta { display:flex; align-items:center; gap:6px; margin:7px 0; font-size:12px; }
+    .shot-meta label { display:flex; align-items:center; gap:5px; margin:0; color:var(--text); font-size:12px; }
+    .shot-meta input { width:20px; min-height:20px; height:20px; margin:0; accent-color:var(--blue); }
+    .shot-download { min-height:38px; padding:8px; font-size:12px; }
+    #shotPreview { width:min(calc(100% - 12px),900px); max-height:94vh; }
+    #shotPreview img { display:block; max-width:100%; max-height:75vh; margin:0 auto 12px; object-fit:contain; }
+    #shotPreview .modal-body { max-height:94vh; }
+    #shotPreview .grid { margin-top:10px; }
     @media (max-width:380px) { .grid { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -69,6 +97,8 @@
 <main>
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
   <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
+  <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button></nav>
+  <div id="repositoryView">
 
   <section class="card historical hidden" id="historical">
     <h2>VIEWING HISTORICAL VERSION</h2>
@@ -116,6 +146,36 @@
     <div id="commits" class="muted">Loading…</div>
     <button class="history-more hidden" id="loadOlder">LOAD OLDER</button>
   </section>
+  </div>
+
+  <div id="screenshotsView" class="hidden">
+    <section class="card">
+      <h2>WEBSITE SCREENSHOTS</h2>
+      <p class="muted">Capture real scroll positions as PNGs for visual AI review.</p>
+      <div id="captureForm">
+        <label for="capturePage">Page</label><select id="capturePage"></select>
+        <label style="margin-top:15px">Capture</label>
+        <div class="capture-options" role="radiogroup" aria-label="Screen sizes">
+          <label><input type="radio" name="captureDevices" value="mobile"><span>Mobile</span></label>
+          <label><input type="radio" name="captureDevices" value="desktop"><span>Desktop</span></label>
+          <label><input type="radio" name="captureDevices" value="both" checked><span>Both</span></label>
+        </div>
+        <label for="captureOverlap">Overlap: <strong id="overlapValue">20%</strong></label>
+        <input id="captureOverlap" type="range" min="0" max="50" step="5" value="20">
+        <details class="capture-advanced"><summary>Advanced timing</summary><label for="captureSettle" style="margin-top:10px">Wait after each scroll (ms)</label><input id="captureSettle" type="number" min="300" max="2500" step="100" value="1300"><small class="muted">Increase if the page has slow transitions.</small></details>
+        <button class="primary" id="captureButton">CAPTURE SCREENSHOTS</button>
+      </div>
+      <p id="captureStatus" class="muted" role="status"></p>
+    </section>
+    <section class="card hidden" id="shotResults">
+      <h2>LAST CAPTURE</h2>
+      <p class="muted" id="shotSummary"></p>
+      <div class="shot-toolbar"><button id="selectAllShots">SELECT ALL</button><button class="primary" id="downloadSelected">DOWNLOAD SELECTED</button></div>
+      <p class="hint" style="font-size:12px">If your browser blocks multiple downloads, use each image’s Download button.</p>
+      <div id="shotGroups"></div>
+      <button class="danger" id="clearShots" style="margin-top:18px">CLEAR SAVED SCREENSHOTS</button>
+    </section>
+  </div>
 </main>
 
 <dialog id="modal"><div class="modal-body">
@@ -123,6 +183,7 @@
   <div id="modalContent"></div>
   <div class="grid"><button id="modalCancel">CANCEL</button><button class="primary" id="modalConfirm">CONFIRM</button></div>
 </div></dialog>
+<dialog id="shotPreview"><div class="modal-body"><h2 id="shotPreviewTitle"></h2><img id="shotPreviewImage" alt="Screenshot preview"><div class="grid"><button id="closeShotPreview">CLOSE</button><a class="button primary" id="shotPreviewDownload" download>DOWNLOAD PNG</a></div></div></dialog>
 
 <script>
   let csrf = '';
@@ -131,6 +192,10 @@
   let selectedProject = '';
   let currentPreviewUrl = null;
   let viewGeneration = 0;
+  let capturePagesByProject = {};
+  let shownShotSession = null;
+  let shotPolling = false;
+  let captureRunning = false;
   const projectParam = () => `project=${encodeURIComponent(selectedProject)}`;
   const siteUrl = () => currentPreviewUrl;
   const versionUrl = hash => `/versions/${encodeURIComponent(selectedProject)}/${hash}/preview/${currentPreviewUrl.split('/preview/')[1]}`;
@@ -456,12 +521,15 @@
       for (const item of data.projects) {
         const option = document.createElement('option'); option.value = item.name; option.textContent = item.name;
         option.dataset.previewUrl = item.previewUrl || ''; $('project').append(option);
+        capturePagesByProject[item.name] = item.capturePages || [];
       }
       const stored = localStorage.getItem('devPanelProject');
       selectedProject = data.projects.some(p => p.name === stored) ? stored : data.projects[0].name;
       $('project').value = selectedProject;
       updatePreview();
+      updateCapturePages();
       await refresh();
+      setView(localStorage.getItem('devPanelView') === 'screenshots' ? 'screenshots' : 'repository');
     } catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
   }
 
@@ -469,13 +537,145 @@
     currentPreviewUrl = $('project').selectedOptions[0]?.dataset.previewUrl || null;
   }
 
+  function setView(view) {
+    const shots = view === 'screenshots';
+    $('screenshotsView').classList.toggle('hidden', !shots);
+    $('repositoryView').classList.toggle('hidden', shots);
+    $('screenshotsTab').classList.toggle('active', shots);
+    $('repositoryTab').classList.toggle('active', !shots);
+    $('screenshotsTab').setAttribute('aria-current', shots ? 'page' : 'false');
+    $('repositoryTab').setAttribute('aria-current', shots ? 'false' : 'page');
+    localStorage.setItem('devPanelView', view);
+    if (shots) loadScreenshots();
+  }
+
+  function updateCapturePages() {
+    $('capturePage').replaceChildren();
+    const pages = capturePagesByProject[selectedProject] || [];
+    for (const page of pages) {
+      const option = document.createElement('option'); option.value = page;
+      option.textContent = page; $('capturePage').append(option);
+    }
+    $('captureForm').classList.toggle('hidden', !pages.length);
+    $('captureStatus').textContent = pages.length ? '' : 'This project has no configured website pages.';
+    shownShotSession = null;
+    $('shotResults').classList.add('hidden');
+  }
+
+  const shotUrl = (file, download = false) => `/api/screenshots/image?${projectParam()}&file=${encodeURIComponent(file)}${download ? '&download=1' : ''}`;
+
+  function renderShots(session) {
+    $('shotResults').classList.toggle('hidden', !session);
+    if (!session) return;
+    const count = session.groups.reduce((total, group) => total + group.images.length, 0);
+    $('shotSummary').textContent = `${session.page} · ${count} PNG${count === 1 ? '' : 's'} · ${new Date(session.createdAt * 1000).toLocaleString()}`;
+    $('shotGroups').replaceChildren();
+    for (const group of session.groups) {
+      const section = document.createElement('section'); section.className = 'shot-group';
+      const heading = document.createElement('h3'); heading.textContent = `${group.device.toUpperCase()} · ${group.images.length}`;
+      section.append(heading);
+      const grid = document.createElement('div'); grid.className = 'shot-grid';
+      for (const shot of group.images) {
+        const card = document.createElement('div'); card.className = 'shot-item';
+        const open = document.createElement('button'); open.className = 'shot-open';
+        open.setAttribute('aria-label', `Preview ${group.device} screenshot ${shot.number}`);
+        const image = document.createElement('img'); image.src = shotUrl(shot.file); image.loading = 'lazy';
+        image.alt = `${group.device} screenshot ${shot.number}`; open.append(image);
+        open.onclick = () => {
+          $('shotPreviewTitle').textContent = `${group.device.toUpperCase()} ${String(shot.number).padStart(2, '0')}`;
+          $('shotPreviewImage').src = shotUrl(shot.file);
+          $('shotPreviewDownload').href = shotUrl(shot.file, true);
+          $('shotPreviewDownload').download = shot.file;
+          $('shotPreview').showModal();
+        };
+        const meta = document.createElement('div'); meta.className = 'shot-meta';
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = true;
+        checkbox.className = 'shot-select'; checkbox.dataset.file = shot.file;
+        label.append(checkbox, document.createTextNode(` ${String(shot.number).padStart(2, '0')} · ${group.device}`));
+        meta.append(label);
+        const download = document.createElement('a'); download.className = 'button shot-download';
+        download.textContent = 'DOWNLOAD PNG'; download.href = shotUrl(shot.file, true); download.download = shot.file;
+        card.append(open, meta, download); grid.append(card);
+      }
+      section.append(grid);
+      if (group.truncated) {
+        const warning = document.createElement('p'); warning.className = 'warning';
+        warning.textContent = 'This page reached the 100 screenshot limit for this size.'; section.append(warning);
+      }
+      $('shotGroups').append(section);
+    }
+    shownShotSession = session.id;
+  }
+
+  async function loadScreenshots() {
+    if (!selectedProject || shotPolling) return;
+    shotPolling = true;
+    const project = selectedProject;
+    try {
+      const result = await api('/api/screenshots');
+      if (project !== selectedProject) return;
+      const job = result.job;
+      captureRunning = Boolean(job?.running);
+      $('captureButton').disabled = captureRunning || !(capturePagesByProject[selectedProject] || []).length;
+      $('clearShots').disabled = captureRunning;
+      if (captureRunning) {
+        $('captureStatus').textContent = `${job.phase || 'Capturing'}${job.device ? ` ${job.device}` : ''}${job.current ? ` · ${job.current} PNGs` : ''}… You can leave this page and return.`;
+      } else if (job?.error) {
+        $('captureStatus').textContent = `Capture failed: ${job.error}`;
+      } else if (job?.phase === 'Complete') {
+        $('captureStatus').textContent = 'Capture complete.';
+      }
+      if (result.session?.id !== shownShotSession) renderShots(result.session);
+    } catch (error) { $('captureStatus').textContent = error.message; }
+    finally { shotPolling = false; }
+  }
+
+  $('repositoryTab').onclick = () => setView('repository');
+  $('screenshotsTab').onclick = () => setView('screenshots');
+  $('captureOverlap').oninput = () => $('overlapValue').textContent = `${$('captureOverlap').value}%`;
+  $('captureButton').onclick = async () => {
+    $('captureButton').disabled = true;
+    $('captureStatus').textContent = 'Starting capture…';
+    try {
+      await api('/api/screenshots/capture', {method:'POST', body:{
+        page:$('capturePage').value,
+        devices:document.querySelector('input[name="captureDevices"]:checked').value,
+        overlap:Number($('captureOverlap').value), settleMs:Number($('captureSettle').value)
+      }});
+      captureRunning = true;
+      await loadScreenshots();
+    } catch (error) { $('captureStatus').textContent = error.message; $('captureButton').disabled = false; }
+  };
+  $('selectAllShots').onclick = () => document.querySelectorAll('.shot-select').forEach(box => { box.checked = true; });
+  $('downloadSelected').onclick = () => {
+    const files = [...document.querySelectorAll('.shot-select:checked')].map(box => box.dataset.file);
+    if (!files.length) { $('captureStatus').textContent = 'Select at least one screenshot.'; return; }
+    for (const file of files) {
+      const anchor = document.createElement('a'); anchor.href = shotUrl(file, true);
+      anchor.download = file; document.body.append(anchor); anchor.click(); anchor.remove();
+    }
+  };
+  $('clearShots').onclick = async () => {
+    if (!window.confirm('Delete the saved screenshots for this project?')) return;
+    try {
+      await api('/api/screenshots/clear', {method:'POST'});
+      shownShotSession = null; renderShots(null); $('captureStatus').textContent = 'Saved screenshots cleared.';
+    } catch (error) { $('captureStatus').textContent = error.message; }
+  };
+  $('closeShotPreview').onclick = () => $('shotPreview').close();
+  $('shotPreview').onclick = event => { if (event.target === $('shotPreview')) $('shotPreview').close(); };
+  setInterval(() => { if (captureRunning || !$('screenshotsView').classList.contains('hidden')) loadScreenshots(); }, 1800);
+
   $('project').onchange = async () => {
     viewGeneration += 1;
     selectedProject = $('project').value;
     localStorage.setItem('devPanelProject', selectedProject);
     updatePreview();
+    updateCapturePages();
     $('notice').className = 'card';
     await refresh();
+    if (!$('screenshotsView').classList.contains('hidden')) await loadScreenshots();
   };
 
   start();

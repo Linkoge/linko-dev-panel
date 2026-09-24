@@ -14,11 +14,12 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from repository import GitError, Project, load_projects, snapshot
+import screenshots
 
 PANEL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PANEL_DIR / "projects.json"
 PROJECTS = load_projects(CONFIG_PATH)
-VERSION = "1.1"
+VERSION = "1.2"
 HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LINKO_PANEL_PORT", "8765"))
 MAX_BODY = 16_384
@@ -135,12 +136,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.serve_file(PANEL_DIR / "index.html", panel=True)
             elif path == "/api/projects":
                 self.send_json({"ok": True, "version": VERSION, "projects": [{"name": p.name, "previewUrl":
-                                f"/site/{quote(p.name, safe='')}/preview/{quote(p.preview, safe='/')}" if p.preview else None}
+                                f"/site/{quote(p.name, safe='')}/preview/{quote(p.preview, safe='/')}" if p.preview else None,
+                                "capturePages": list(screenshots.pages(p))}
                                 for p in PROJECTS.values()],
                                 "csrfToken": CSRF_TOKEN})
             elif path.startswith("/api/"):
                 project = project_from(query.get("project", [None])[0])
-                if path == "/api/status":
+                if path == "/api/screenshots":
+                    self.send_json({"ok": True, **screenshots.status(project)})
+                elif path == "/api/screenshots/image":
+                    filename = query.get("file", [""])[0]
+                    image = screenshots.image_path(project, filename)
+                    if image is None:
+                        self.error("Screenshot not found.", HTTPStatus.NOT_FOUND)
+                    else:
+                        self.send_screenshot(image, query.get("download", ["0"])[0] == "1")
+                elif path == "/api/status":
                     self.send_json({"ok": True, **project.status(RETURN_BRANCHES.get(project.name))})
                 elif path == "/api/diff":
                     self.send_json({"ok": True, **project.diff()})
@@ -217,12 +228,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.view_historical(project, body)
             elif path == "/api/history/return":
                 self.return_current(project)
+            elif path == "/api/screenshots/capture":
+                address, port = self.server.server_address[:2]
+                if address in ("0.0.0.0", "::"):
+                    address = "127.0.0.1"
+                elif ":" in address:
+                    address = f"[{address}]"
+                origin = f"http://{address}:{port}"
+                screenshots.start(project, body, origin)
+                self.send_json({"ok": True, **screenshots.status(project)}, HTTPStatus.ACCEPTED)
+            elif path == "/api/screenshots/clear":
+                screenshots.clear(project)
+                self.send_json({"ok": True})
             else:
                 self.error("Not found.", HTTPStatus.NOT_FOUND)
         except ValueError as exc:
             self.error(str(exc))
         except GitError as exc:
             self.error("Git operation failed.", HTTPStatus.CONFLICT, exc.output)
+        except RuntimeError as exc:
+            self.error(str(exc), HTTPStatus.SERVICE_UNAVAILABLE)
         except Exception as exc:
             self.error("Unexpected server error.", HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
@@ -378,6 +403,17 @@ class Handler(BaseHTTPRequestHandler):
         self.security_headers()
         if panel:
             self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_screenshot(self, path: Path, download: bool) -> None:
+        body = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(body)))
+        if download:
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.security_headers()
         self.end_headers()
         self.wfile.write(body)
 
