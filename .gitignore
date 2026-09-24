@@ -18,13 +18,27 @@ htmlcov/
 # Local configuration and secrets
 .env
 .env.*
-!.env.example
+.envrc
+.direnv/
+.netrc
+.npmrc
+.pypirc
+secrets.*
+credentials.*
+*credentials*.json
 *.pem
 *.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
 
 # Runtime output
 *.log
 *.pid
+*.sqlite
+*.sqlite3
+*.db
 
 # Editors and operating systems
 .idea/
