@@ -1,0 +1,17 @@
+[Unit]
+Description=Private Linko development control panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mint1/projects/dev-panel
+ExecStart=/usr/bin/python3 /home/mint1/projects/dev-panel/server.py
+Environment=PYTHONUNBUFFERED=1
+Environment=LINKO_PANEL_HOST=100.65.36.48
+Environment=LINKO_PANEL_PORT=8765
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

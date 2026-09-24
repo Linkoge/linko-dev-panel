@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#160805">
+  <title>Linko Dev</title>
+  <style>
+    :root { color-scheme: dark; --bg:#120704; --card:#21100a; --line:#542819; --text:#fff0e7; --muted:#c8947c; --blue:#ff7043; --green:#ff9a55; --red:#ff5d3b; --amber:#ffad5c; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at top,#4a170b 0,#1d0b06 18rem,#120704 35rem); color:var(--text); font:15px/1.45 system-ui,-apple-system,sans-serif; }
+    main { width:min(100%,560px); margin:auto; padding:calc(18px + env(safe-area-inset-top)) 16px calc(30px + env(safe-area-inset-bottom)); }
+    header { display:flex; align-items:center; justify-content:space-between; margin:8px 2px 18px; }
+    h1 { margin:0; font-size:20px; letter-spacing:.16em; }
+    h2 { margin:0 0 12px; font-size:15px; }
+    .online { color:var(--green); font-size:13px; }
+    .card { background:rgba(33,16,10,.94); border:1px solid var(--line); border-radius:18px; padding:16px; margin:12px 0; box-shadow:0 12px 30px #0a020166; }
+    .meta { display:grid; grid-template-columns:1fr auto; gap:8px 12px; }
+    .muted, .hint { color:var(--muted); }
+    .status-heading { margin-bottom:4px; letter-spacing:.06em; }
+    .status-heading.saved { color:var(--green); }
+    .files { margin:6px 0 0; padding:0; list-style:none; max-height:190px; overflow:auto; }
+    .files li { padding:9px 0; border-top:1px solid #452116; overflow-wrap:anywhere; }
+    .files strong, .files small { display:block; }
+    .files small { margin-top:2px; }
+    .repository-details { margin-top:10px; padding-top:10px; border-top:1px solid #452116; }
+    .repository-details summary { color:var(--muted); cursor:pointer; font-size:13px; }
+    .repository-details .meta { margin-top:10px; font-size:13px; }
+    .tag { min-width:28px; color:var(--amber); font:12px/1.8 ui-monospace,monospace; }
+    button, .button { width:100%; min-height:48px; border:1px solid #66301e; border-radius:12px; padding:12px 15px; background:#3b1b11; color:var(--text); font:700 14px/1.2 system-ui,sans-serif; text-align:center; text-decoration:none; cursor:pointer; }
+    button:disabled { opacity:.45; cursor:wait; }
+    .primary { background:linear-gradient(135deg,#ff8a4c,#f4512a); color:#2a0902; border-color:#ff9e68; }
+    .danger { background:#4a140d; color:#ffb099; border:1px solid #8d3525; }
+    .button { display:flex; align-items:center; justify-content:center; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+    label { display:block; margin-bottom:7px; color:var(--muted); font-size:13px; }
+    input { width:100%; min-height:48px; border:1px solid #65311f; border-radius:12px; padding:12px; background:#160905; color:var(--text); font:16px system-ui,sans-serif; outline:none; }
+    input:focus { border-color:var(--blue); }
+    #notice { display:none; white-space:pre-wrap; overflow-wrap:anywhere; }
+    #notice.show { display:block; }
+    #notice.error { border-color:#963a27; color:#ffc0aa; }
+    .commit { display:grid; grid-template-columns:62px 1fr; gap:8px; padding:8px 0; border-top:1px solid #452116; }
+    .commit code { color:var(--blue); }
+    .commit small { display:block; color:var(--muted); }
+    .commit-info { min-width:0; overflow-wrap:anywhere; }
+    .commit-actions { grid-column:1/-1; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .commit-actions button, .commit-actions .button, .hash-button { min-height:38px; padding:9px 10px; font-size:12px; }
+    .hash-button { width:auto; align-self:start; color:var(--blue); background:#32150d; font:700 12px/1.2 ui-monospace,monospace; }
+    .history-more { margin-top:12px; }
+    .historical { border-color:#a45126; background:linear-gradient(145deg,#40200e,#241008); }
+    .historical h2 { color:var(--amber); letter-spacing:.08em; }
+    .historical .commit-meta { margin:12px 0; overflow-wrap:anywhere; }
+    .historical-actions { display:grid; gap:10px; }
+    .hidden { display:none !important; }
+    .compare-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0; text-align:center; }
+    .compare-summary span { padding:10px 5px; border:1px solid var(--line); border-radius:10px; }
+    .compare-file { display:grid; grid-template-columns:38px 1fr; align-items:center; width:100%; min-height:42px; margin-top:7px; text-align:left; font-weight:500; overflow-wrap:anywhere; }
+    .compare-file b { color:var(--amber); font-family:ui-monospace,monospace; }
+    dialog { width:min(calc(100% - 24px),560px); max-height:85vh; border:1px solid var(--line); border-radius:18px; padding:0; background:var(--card); color:var(--text); box-shadow:0 24px 80px #000b; }
+    dialog::backdrop { background:#000b; }
+    .modal-body { padding:18px; overflow:auto; max-height:85vh; }
+    pre { margin:12px 0; padding:12px; max-height:55vh; overflow:auto; border:1px solid var(--line); border-radius:10px; background:#120704; color:#ffe1d2; font:12px/1.5 ui-monospace,SFMono-Regular,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .warning { color:var(--amber); }
+    @media (max-width:380px) { .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><h1>LINKO DEV</h1><span class="online" id="online">● Connecting</span></header>
+
+  <section class="card historical hidden" id="historical">
+    <h2>VIEWING HISTORICAL VERSION</h2>
+    <div class="commit-meta"><code id="historicalHash"></code><br><strong id="historicalSubject"></strong><br><small class="muted" id="historicalDate"></small></div>
+    <div class="historical-actions">
+      <a class="button primary" href="/preview/xsecret.html" target="_blank" rel="noopener">OPEN WEBSITE</a>
+      <button id="historicalCompare">COMPARE WITH CURRENT</button>
+      <button class="danger" id="returnCurrent">RETURN TO CURRENT</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="status-heading" id="statusHeading">CHECKING LOCAL CHANGES…</h2>
+    <ul class="files" id="files"></ul>
+    <details class="repository-details">
+      <summary>Repository details</summary>
+      <div class="meta">
+        <span class="muted">Branch</span><strong id="branch">—</strong>
+        <span class="muted">Changes</span><strong id="tree">—</strong>
+        <span class="muted">Upstream</span><strong id="upstream">—</strong>
+        <span class="muted">Remote</span><strong id="remote">—</strong>
+      </div>
+    </details>
+  </section>
+
+  <a class="button primary" id="normalPreview" href="/preview/xsecret.html" target="_blank" rel="noopener">OPEN WEBSITE PREVIEW</a>
+
+  <section class="card" id="gitActions">
+    <label for="message">Commit message</label>
+    <input id="message" maxlength="200" autocomplete="off" placeholder="Mobile development checkpoint">
+    <button class="primary" id="save" style="margin-top:10px">SAVE TO GITHUB</button>
+    <div class="grid">
+      <button id="changes">VIEW CHANGES</button>
+      <button id="pull">PULL FROM GITHUB</button>
+    </div>
+    <button class="danger" id="discard" style="margin-top:10px">DISCARD CURRENT CHANGES</button>
+  </section>
+
+  <section class="card" id="notice"></section>
+
+  <section class="card">
+    <h2>History</h2>
+    <div id="commits" class="muted">Loading…</div>
+    <button class="history-more hidden" id="loadOlder">LOAD OLDER</button>
+  </section>
+</main>
+
+<dialog id="modal"><div class="modal-body">
+  <h2 id="modalTitle"></h2>
+  <div id="modalContent"></div>
+  <div class="grid"><button id="modalCancel">CANCEL</button><button class="primary" id="modalConfirm">CONFIRM</button></div>
+</div></dialog>
+
+<script>
+  let csrf = '';
+  let historicalMode = null;
+  let historyOffset = 0;
+  const $ = id => document.getElementById(id);
+  const buttons = () => [...document.querySelectorAll('button')];
+  const applyMode = () => {
+    ['save', 'pull', 'discard'].forEach(id => $(id).disabled = Boolean(historicalMode));
+    $('message').disabled = Boolean(historicalMode);
+  };
+  const setBusy = value => {
+    buttons().forEach(button => { if (!button.closest('dialog')) button.disabled = value; });
+    if (!value) applyMode();
+  };
+  const escapeText = value => String(value ?? '');
+
+  function notice(message, error = false) {
+    const box = $('notice');
+    box.textContent = message;
+    box.className = `card show${error ? ' error' : ''}`;
+    box.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  async function api(path, options = {}) {
+    const init = {...options, headers:{...(options.headers || {})}};
+    if (init.method === 'POST') {
+      init.headers['Content-Type'] = 'application/json';
+      init.headers['X-Linko-CSRF'] = csrf;
+      init.body = JSON.stringify(options.body || {});
+    }
+    const response = await fetch(path, init);
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error([data.error, data.output].filter(Boolean).join('\n'));
+    return data;
+  }
+
+  function renderStatus(data) {
+    if (data.csrfToken) csrf = data.csrfToken;
+    $('online').textContent = '● Server online';
+    $('branch').textContent = data.branch;
+    $('tree').textContent = `${data.tracked.length} tracked · ${data.untracked.length} untracked`;
+    $('upstream').textContent = data.upstream || 'Not configured';
+    $('remote').textContent = data.originMain.label;
+    historicalMode = data.historical;
+    $('historical').classList.toggle('hidden', !historicalMode);
+    $('normalPreview').classList.toggle('hidden', Boolean(historicalMode));
+    $('gitActions').classList.toggle('hidden', Boolean(historicalMode));
+    if (historicalMode) {
+      $('historicalHash').textContent = historicalMode.hash;
+      $('historicalSubject').textContent = historicalMode.subject;
+      $('historicalDate').textContent = formatDate(historicalMode.date);
+    }
+    applyMode();
+    const heading = $('statusHeading');
+    const changeCount = data.localChanges.length;
+    heading.textContent = data.clean
+      ? 'ALL CHANGES SAVED'
+      : `${changeCount} UNSAVED ${changeCount === 1 ? 'CHANGE' : 'CHANGES'}`;
+    heading.classList.toggle('saved', data.clean);
+    const files = $('files');
+    files.replaceChildren();
+    data.localChanges.forEach(file => {
+      const li = document.createElement('li');
+      const path = document.createElement('strong'); path.textContent = file.path;
+      const modified = document.createElement('small'); modified.className = 'muted';
+      if (file.mtime == null) {
+        modified.textContent = file.status.includes('D') ? 'Deleted locally' : 'Modified time unavailable';
+      } else {
+        modified.textContent = `Modified ${relativeTime(file.mtime, data.serverTime)} · ${file.mtimeExact}`;
+        modified.title = `${file.mtimeFull} (Mint machine local time)`;
+      }
+      li.append(path, modified); files.append(li);
+    });
+  }
+
+  function relativeTime(timestamp, now) {
+    const seconds = Math.max(0, Math.round(now - timestamp));
+    if (seconds < 45) return 'just now';
+    if (seconds < 90) return '1 min ago';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours} hr${hours === 1 ? '' : 's'} ago`;
+    const days = Math.round(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  }
+
+  async function refresh() {
+    try { renderStatus(await api('/api/status')); await loadHistory(true); }
+    catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
+  }
+
+  function formatDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
+  }
+
+  async function copyHash(hash, button) {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(hash);
+      else {
+        const input = document.createElement('textarea'); input.value = hash; document.body.append(input);
+        input.select(); document.execCommand('copy'); input.remove();
+      }
+      const prior = button.textContent; button.textContent = 'COPIED'; setTimeout(() => button.textContent = prior, 1200);
+    } catch (error) { notice(`Could not copy automatically. Hash: ${hash}`, true); }
+  }
+
+  function renderCommit(commit) {
+    const row = document.createElement('div'); row.className = 'commit';
+    const hash = document.createElement('button'); hash.className = 'hash-button'; hash.textContent = commit.hash;
+    hash.title = `Copy ${commit.fullHash}`; hash.onclick = () => copyHash(commit.fullHash, hash);
+    const info = document.createElement('div'); info.className = 'commit-info'; info.textContent = commit.subject;
+    const date = document.createElement('small'); date.textContent = formatDate(commit.date); info.append(date);
+    const actions = document.createElement('div'); actions.className = 'commit-actions';
+    const view = document.createElement('a'); view.className = 'button'; view.textContent = 'VIEW VERSION';
+    view.href = `/history-preview/${commit.fullHash}/preview/xsecret.html`;
+    view.target = '_blank'; view.rel = 'noopener noreferrer';
+    view.onclick = () => { setTimeout(() => window.focus(), 0); };
+    const compare = document.createElement('button'); compare.textContent = 'COMPARE WITH CURRENT'; compare.onclick = () => compareCommit(commit.fullHash);
+    actions.append(view, compare); row.append(hash, info, actions);
+    return row;
+  }
+
+  async function loadHistory(reset = false) {
+    if (reset) {
+      historyOffset = 0;
+      $('commits').replaceChildren();
+      $('commits').className = 'muted';
+    }
+    const data = await api(`/api/history?offset=${historyOffset}`);
+    if (reset) $('commits').className = '';
+    data.commits.forEach(commit => $('commits').append(renderCommit(commit)));
+    historyOffset = data.nextOffset;
+    $('loadOlder').classList.toggle('hidden', !data.hasMore);
+    if (!$('commits').children.length) $('commits').textContent = 'No commits found.';
+  }
+
+  async function compareCommit(hash) {
+    setBusy(true);
+    try {
+      const data = await api(`/api/compare?commit=${encodeURIComponent(hash)}`);
+      const intro = document.createElement('p');
+      intro.textContent = `${data.commit.hash} → ${data.currentRef}`;
+      const summary = document.createElement('div'); summary.className = 'compare-summary';
+      for (const [label, key] of [['Added','added'], ['Removed','removed'], ['Modified','modified']]) {
+        const item = document.createElement('span'); item.textContent = `${data.summary[key]} ${label}`; summary.append(item);
+      }
+      const files = document.createElement('div');
+      const diff = document.createElement('pre'); diff.textContent = data.files.length ? 'Select a file to view its diff.' : 'No differences from current.';
+      data.files.forEach(file => {
+        const button = document.createElement('button'); button.className = 'compare-file';
+        const code = document.createElement('b'); code.textContent = file.status;
+        const label = document.createElement('span'); label.textContent = file.label;
+        button.append(code, label);
+        button.onclick = async () => {
+          button.disabled = true; diff.textContent = 'Loading diff…';
+          try {
+            const result = await api(`/api/compare/file?commit=${encodeURIComponent(hash)}&index=${file.index}`);
+            diff.textContent = result.diff;
+          } catch (error) { diff.textContent = error.message; }
+          finally { button.disabled = false; }
+        };
+        files.append(button);
+      });
+      await confirmDialog('Compare with current', [intro, summary, files, diff], 'CLOSE');
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  }
+
+  function listBlock(title, values, empty = 'None') {
+    const wrap = document.createElement('div');
+    const heading = document.createElement('p'); heading.textContent = title; wrap.append(heading);
+    const pre = document.createElement('pre'); pre.textContent = values.length ? values.join('\n') : empty; wrap.append(pre);
+    return wrap;
+  }
+
+  function confirmDialog(title, nodes, confirmLabel, danger = false) {
+    return new Promise(resolve => {
+      $('modalTitle').textContent = title;
+      $('modalContent').replaceChildren(...nodes);
+      $('modalConfirm').textContent = confirmLabel;
+      $('modalConfirm').className = danger ? 'danger' : 'primary';
+      const finish = value => { $('modal').close(); resolve(value); };
+      $('modalCancel').onclick = () => finish(false);
+      $('modalConfirm').onclick = () => finish(true);
+      $('modal').oncancel = event => { event.preventDefault(); finish(false); };
+      $('modal').showModal();
+    });
+  }
+
+  $('changes').onclick = async () => {
+    setBusy(true);
+    try {
+      const data = await api('/api/diff');
+      const note = document.createElement('p'); note.className = 'warning'; note.textContent = data.note;
+      await confirmDialog('Current changes', [listBlock('Tracked diff', data.diff ? [data.diff] : [], 'No tracked diff.'), note, listBlock('Untracked files', data.untracked)], 'CLOSE');
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
+  $('save').onclick = async () => {
+    setBusy(true);
+    try {
+      const prepared = await api('/api/save/prepare', {method:'POST', body:{message:$('message').value}});
+      const files = [...prepared.tracked.map(f => `${f.status} ${f.path}`), ...prepared.untracked.map(path => `?? ${path}`)];
+      const msg = document.createElement('p'); msg.textContent = `Commit message: ${prepared.message}`;
+      const ok = await confirmDialog('Commit and push these files?', [msg, listBlock('Files', files)], 'COMMIT + PUSH');
+      if (!ok) return;
+      notice('Saving to GitHub…');
+      const result = await api('/api/save/confirm', {method:'POST', body:{confirmation:prepared.confirmation}});
+      notice(result.output || 'Committed and pushed successfully.');
+      $('message').value = '';
+      await refresh();
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
+  $('pull').onclick = async () => {
+    const text = document.createElement('p'); text.textContent = 'Run git pull --ff-only? A divergent history will be reported, not merged.';
+    if (!await confirmDialog('Pull from GitHub', [text], 'PULL')) return;
+    setBusy(true); notice('Pulling from GitHub…');
+    try { const result = await api('/api/pull', {method:'POST'}); notice(result.output || 'Pull completed.'); await refresh(); }
+    catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
+  $('discard').onclick = async () => {
+    setBusy(true);
+    try {
+      const prepared = await api('/api/discard/prepare', {method:'POST'});
+      const warning = document.createElement('p'); warning.className = 'warning'; warning.textContent = prepared.warning;
+      const ok = await confirmDialog('Discard tracked changes?', [warning, listBlock('Will be restored', prepared.tracked), listBlock('Untracked files — kept', prepared.untracked)], 'DISCARD LISTED FILES', true);
+      if (!ok) return;
+      const result = await api('/api/discard/confirm', {method:'POST', body:{confirmation:prepared.confirmation}});
+      notice(result.output); await refresh();
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
+  $('loadOlder').onclick = async () => {
+    $('loadOlder').disabled = true;
+    try { await loadHistory(false); }
+    catch (error) { notice(error.message, true); }
+    finally { $('loadOlder').disabled = false; }
+  };
+
+  $('historicalCompare').onclick = () => {
+    if (historicalMode) compareCommit(historicalMode.fullHash);
+  };
+
+  $('returnCurrent').onclick = async () => {
+    const text = document.createElement('p');
+    text.textContent = `Return to ${historicalMode?.returnBranch || 'the current branch'}? Historical browsing did not move its branch pointer.`;
+    if (!await confirmDialog('Return to current', [text], 'RETURN TO CURRENT')) return;
+    setBusy(true);
+    try {
+      const result = await api('/api/history/return', {method:'POST'});
+      notice(result.output); renderStatus(result); await loadHistory(true);
+    } catch (error) { notice(error.message, true); }
+    finally { setBusy(false); }
+  };
+
+  refresh();
+</script>
+</body>
+</html>
