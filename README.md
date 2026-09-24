@@ -1,77 +1,76 @@
 # Dev Panel
 
-A small, mobile-friendly Git project manager for explicitly configured local repositories. It uses Python's standard library and keeps this panel in its own repository. It does not copy managed repositories into the panel directory.
+**Version 1.1** · A small, phone-friendly web panel for managing a fixed list of local Git repositories. It runs on Python's standard library and calls your installed Git; there is no package install or build step.
 
-## Architecture
+## What it does
 
-- `projects.json` is the allowlist of repositories. The server loads and validates it at startup.
-- `repository.py` contains repository-specific Git operations. Every operation runs from the selected configured repository root.
-- `server.py` handles HTTP, request validation, confirmation tokens, and preview files.
-- `index.html` is the phone-friendly interface. The selected project is remembered in the browser.
+- Shows the selected repository's branch, changed files, commit history, and local ahead/behind status.
+- Reviews and commits all local changes, then lets you push separately. Pull uses `git pull --ff-only`.
+- Shows a tracked diff and lists untracked files. Discard restores only the listed **unstaged tracked** changes after confirmation; staged and untracked files stay.
+- Compares a historical commit with the current branch, including file-by-file diffs. You can restore a historical tree by creating a new commit, or check out a commit temporarily in detached HEAD mode and return to a branch.
+- Opens a live or committed website preview when a project has a configured HTML entry file. Projects without one still have all Git controls.
 
-The current configuration manages `/home/mint1/projects/Linko` and this panel at `/home/mint1/projects/dev-panel`. Linko has a website preview; Dev Panel has none. The project selector controls status, files, diff, history, commit, push, pull, discard, restore, and historical checkout. Unknown project names and arbitrary paths are rejected by the server.
+Actions apply only to repositories named in `projects.json`. The panel does not copy repositories or accept arbitrary paths from the browser.
 
-## Run
+## Quick start
 
-Requires Python 3.10 or newer, Git, and the configured repositories checked out locally.
-
-```bash
-LINKO_PANEL_HOST=127.0.0.1 ./start.sh
-```
-
-Open <http://127.0.0.1:8765/>. On the Mint machine, the default bind address is `100.65.36.48` for Tailscale access. `LINKO_PANEL_HOST`, `LINKO_PANEL_PORT`, and `LINKO_PANEL_ALLOWED_HOSTS` (comma-separated extra hostnames) are the available environment settings.
-
-## Add a repository
-
-Add an entry to `projects.json`, then restart the service. The path must be an absolute path to a Git repository root. Only entries in this file can be selected or used by Git operations.
+You need **Python 3.10+**, **Git**, and at least one local Git repository. The checked-in `projects.json` contains paths for the original machine, so edit it before the first run on another computer. Replace its entries with your own absolute paths, for example:
 
 ```json
 {
   "projects": {
-    "Linko": {
-      "path": "/home/mint1/projects/Linko",
+    "My Project": {
+      "path": "/home/you/projects/my-project",
       "remote": "origin",
-      "preview": "xsecret.html"
-    },
-    "Dev Panel": {
-      "path": "/home/mint1/projects/dev-panel",
-      "remote": "origin"
-    },
-    "Another Project": {
-      "path": "/home/mint1/projects/another-project",
-      "remote": "origin"
+      "preview": "index.html"
     }
   }
 }
 ```
 
-`remote` defaults to `origin`. Set it to `null` for a local-only repository; Push will be unavailable and ahead/behind will not be reported. The optional `preview` is a relative HTML file path inside the repository. Omit it for projects without a website. Preview and historical preview serve only common web asset file types, reject hidden paths and paths outside the configured repository, and are unavailable for projects without `preview`.
+Then run:
 
-Ahead/behind compares against the selected branch's upstream on the configured remote, or the matching local remote-tracking branch if no upstream is set. It uses local tracking data; it does not fetch automatically, so it may be stale until a pull or external fetch. Push targets the configured remote and current branch. Pull requires an upstream on that remote and uses `--ff-only`.
+```bash
+./start.sh
+```
 
-## Git and version actions
+Open <http://127.0.0.1:8765/>. By default, the server listens on localhost. If the example path does not exist or is not a Git repository root, startup fails with a configuration error.
 
-- **Commit changes** reviews the file list and creates a local commit. **Push commits** is a separate action; neither operation runs automatically.
-- **View changes** displays the tracked diff and lists untracked files. **Discard current changes** reviews and restores only listed unstaged tracked files. Staged and untracked files remain.
-- **History** loads recent commits and can compare each with the current branch. For preview-enabled projects, **View version** opens committed website files without changing the working tree.
-- **Check out version** preserves the older detached-HEAD browsing flow. It requires a clean working tree; **Return to current** switches back to the original branch. Commit, push, pull, and discard are disabled while detached.
-- **Restore version** requires a clean working tree. The confirmation shows the target commit, current commit, and files that will change. It creates a new commit with the target's tree on the current branch. The old commit and later history remain available, so an accidental restore can be recovered with another restore. It does not push automatically.
+`remote` defaults to `origin`. Use `null` for a local-only repository; push and remote comparison will be unavailable. `preview` is optional and must be a relative path to an HTML file in that repository. Remove it for projects without a website. Restart the server after changing `projects.json`.
 
-The panel never silently deletes uncommitted work during version checkout or restore. Commit review tokens expire after five minutes and are tied to a single project and Git state.
+## Configuration and access
 
-## Service
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `LINKO_PANEL_HOST` | `127.0.0.1` | Address to listen on |
+| `LINKO_PANEL_PORT` | `8765` | HTTP port |
+| `LINKO_PANEL_ALLOWED_HOSTS` | Empty | Extra comma-separated hostnames accepted in requests |
 
-The included `linko-dev-panel.service` is a systemd user service template. Its paths match this checkout. To install it:
+These `LINKO_PANEL_` names are retained for compatibility with the original installation. To reach the panel from another device, bind to an address that device can reach and restrict access with a firewall or a private network such as Tailscale. **There is no login or TLS. Anyone who can reach the port can use the Git controls.** Mutating requests require a CSRF token and an origin check, but these do not replace network access control.
+
+The included [`linko-dev-panel.service`](linko-dev-panel.service) is a systemd user service for the original installation. Before using it elsewhere, edit `WorkingDirectory`, `ExecStart`, and `LINKO_PANEL_HOST` in the file. Then install it:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp /home/mint1/projects/dev-panel/linko-dev-panel.service ~/.config/systemd/user/
+cp linko-dev-panel.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now linko-dev-panel.service
 ```
 
-After changing Python, HTML, or `projects.json`, restart the running service with `systemctl --user restart linko-dev-panel.service`. If only the service file changes, copy it again and run `systemctl --user daemon-reload` before restarting.
+After changing Python, HTML, or `projects.json`, restart with `systemctl --user restart linko-dev-panel.service`. After changing the service file, copy it again and run `systemctl --user daemon-reload` before restarting.
 
-## Access
+## Git behavior
 
-The panel has no login or TLS. Anyone who can reach its port over the network can use the controls. Restrict access with Tailscale ACLs or a firewall. Mutating requests use a per-process CSRF token and an origin check. There is no endpoint to supply a repository path or arbitrary Git command.
+Commit stages all changes in the selected repository, including untracked files. Review the file list before confirming. Push is a separate action. Ahead/behind uses local remote-tracking data and may be stale until a pull or fetch elsewhere. Push targets the configured remote and current branch; pull requires an upstream on that remote.
+
+Restoring a version requires a clean working tree and makes a **new commit** with the selected commit's files. Earlier commits remain in history, and the restore is not pushed automatically. Temporary historical checkout also requires a clean working tree. While detached, commit, push, pull, discard, and restore are unavailable; use **Return to current** to switch back to a branch. Preview serves only common web asset types and rejects hidden paths and paths outside the configured repository.
+
+## Development
+
+`server.py` handles HTTP and request checks, `repository.py` contains Git operations, `index.html` is the interface, and `projects.json` is the repository allowlist. Run the integration tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Licensed under the [MIT License](LICENSE).

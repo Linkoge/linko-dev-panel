@@ -18,7 +18,8 @@ from repository import GitError, Project, load_projects, snapshot
 PANEL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PANEL_DIR / "projects.json"
 PROJECTS = load_projects(CONFIG_PATH)
-HOST = os.environ.get("LINKO_PANEL_HOST", "100.65.36.48")
+VERSION = "1.1"
+HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LINKO_PANEL_PORT", "8765"))
 MAX_BODY = 16_384
 TOKEN_TTL = 300
@@ -61,7 +62,7 @@ def take_confirmation(value: object, kind: str, project: Project) -> dict[str, o
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "DevPanel/2.0"
+    server_version = f"DevPanel/{VERSION}"
 
     def allowed_host(self) -> bool:
         try:
@@ -133,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in {"/", "/index.html", "/panel", "/panel/", "/dev-panel", "/dev-panel/"}:
                 self.serve_file(PANEL_DIR / "index.html", panel=True)
             elif path == "/api/projects":
-                self.send_json({"ok": True, "projects": [{"name": p.name, "previewUrl":
+                self.send_json({"ok": True, "version": VERSION, "projects": [{"name": p.name, "previewUrl":
                                 f"/site/{quote(p.name, safe='')}/preview/{quote(p.preview, safe='/')}" if p.preview else None}
                                 for p in PROJECTS.values()],
                                 "csrfToken": CSRF_TOKEN})

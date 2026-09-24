@@ -67,7 +67,7 @@
 </head>
 <body>
 <main>
-  <header><h1>DEV PANEL</h1><span class="online" id="online">● Connecting</span></header>
+  <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
   <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
 
   <section class="card historical hidden" id="historical">
@@ -212,7 +212,7 @@
         modified.textContent = file.status.includes('D') ? 'Deleted locally' : 'Modified time unavailable';
       } else {
         modified.textContent = `Modified ${relativeTime(file.mtime, data.serverTime)} · ${file.mtimeExact}`;
-        modified.title = `${file.mtimeFull} (Mint machine local time)`;
+        modified.title = `${file.mtimeFull} (server local time)`;
       }
       li.append(path, modified); files.append(li);
     });
@@ -452,6 +452,7 @@
     try {
       const data = await api('/api/projects');
       csrf = data.csrfToken;
+      $('version').textContent = `v${data.version}`;
       for (const item of data.projects) {
         const option = document.createElement('option'); option.value = item.name; option.textContent = item.name;
         option.dataset.previewUrl = item.previewUrl || ''; $('project').append(option);
