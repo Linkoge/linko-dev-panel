@@ -1,6 +1,6 @@
 # Dev Panel
 
-**Version 1.2** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. The server uses Python's standard library and your installed Git. Screenshot capture uses Playwright and Chrome or Chromium.
+**Version 1.3.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. The server uses Python's standard library and your installed Git. Screenshot capture uses Playwright and Chrome or Chromium.
 
 ## What it does
 
@@ -48,9 +48,9 @@ Open <http://127.0.0.1:8765/>. By default, the server listens on localhost. A pr
 
 ## Screenshots
 
-Select a project, open **Screenshots**, choose a configured page and screen size, then click **Capture Screenshots**. Overlap defaults to 20% and can be set from 0% to 50%. The wait after each scroll defaults to 1300 ms and can be set from 300 to 2500 ms. Each screen size is limited to 100 viewport images; the panel warns if that limit truncates a capture. Only one capture can run at a time across all projects.
+Select a project, open **Screenshots**, choose a configured page and screen size, then click **Capture Screenshots**. The screenshot count depends on the selected page's length. Overlap defaults to 20% and can be set from 0% to 50%. The wait after each scroll defaults to 1300 ms and can be set from 300 to 2500 ms. Each screen size is limited to 100 viewport images; the panel warns if that limit truncates a capture. Only one capture can run at a time across all projects.
 
-A capture continues if you close or refresh the panel while the server stays running. Its latest successful session is saved per project under the Git-ignored `screenshots/` directory. A failed capture leaves the previous successful session in place. Use **Clear saved screenshots** to delete a project's session. **Download Selected** requests one PNG download per selected image; if your browser blocks multiple downloads, use the individual **Download PNG** buttons. Screenshots are stored locally and are not uploaded by the panel.
+A capture continues if you close or refresh the panel while the server stays running. The latest successful session is saved separately for each configured page under the Git-ignored `screenshots/` directory. Changing the page selector shows only that page's saved screenshots; capture that page if none are saved yet. A failed capture leaves that page's previous successful session in place. **Clear saved screenshots** deletes only the selected page's session. **Download Selected** requests one PNG download per selected image; if your browser blocks multiple downloads, use the individual **Download PNG** buttons. Screenshots are stored locally and are not uploaded by the panel.
 
 The panel captures only HTML pages explicitly listed in `projects.json`; it does not accept arbitrary capture URLs. The optional Python Pillow package improves duplicate-image filtering. Without it, only byte-identical neighboring images can be removed.
 

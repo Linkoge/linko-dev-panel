@@ -54,7 +54,7 @@ class ScreenshotTests(unittest.TestCase):
         def fake_engine(_command, *, input, **_kwargs):
             config = json.loads(input)
             folder = Path(config["outputDir"])
-            (folder / "mobile-raw-001.png").write_bytes(b"first")
+            (folder / "mobile-raw-001.png").write_bytes(config["url"].encode())
             (folder / "mobile-raw-002.png").write_bytes(b"second")
             return SimpleNamespace(returncode=0, stdout=json.dumps({"groups": [{
                 "device": "mobile", "truncated": False, "images": [
@@ -62,17 +62,40 @@ class ScreenshotTests(unittest.TestCase):
                     {"file": "mobile-raw-002.png", "scrollY": 700, "activeText": "two"}
                 ]}]}), stderr="")
         with patch.object(screenshots.subprocess, "run", side_effect=fake_engine):
-            config = {"outputDir": str(screenshots.project_dir(self.project) / "work-first")}
-            Path(config["outputDir"]).mkdir(parents=True)
-            screenshots._run(self.project, "home.html", ["mobile"], 20, 900, "node", config, "work-first")
+            for page in ("home.html", "about.html"):
+                config = {"outputDir": str(screenshots.page_dir(self.project, page) / "work-first"),
+                          "url": f"http://127.0.0.1/site/Demo/preview/{page}"}
+                Path(config["outputDir"]).mkdir(parents=True)
+                screenshots._run(self.project, page, ["mobile"], 20, 900, "node", config, "work-first")
         session = screenshots.latest(self.project)
         self.assertEqual(["home-mobile-01.png", "home-mobile-02.png"],
                          [image["file"] for image in session["groups"][0]["images"]])
-        self.assertIsNotNone(screenshots.image_path(self.project, "home-mobile-01.png"))
+        self.assertEqual("about.html", screenshots.status(self.project, "about.html")["session"]["page"])
+        self.assertEqual("home.html", screenshots.status(self.project, "home.html")["session"]["page"])
+        self.assertIn(b"about.html", screenshots.image_path(self.project, "about-mobile-01.png", "about.html").read_bytes())
+        self.assertIsNotNone(screenshots.image_path(self.project, "home-mobile-01.png", "home.html"))
+        self.assertIsNone(screenshots.image_path(self.project, "home-mobile-01.png", "about.html"))
         self.assertIsNone(screenshots.image_path(self.project, "../home-mobile-01.png"))
         self.assertIsNone(screenshots.image_path(self.project, "mobile-raw-001.png"))
+        with self.assertRaises(ValueError):
+            screenshots.status(self.project, "unconfigured.html")
+        screenshots.clear(self.project, "about.html")
+        self.assertIsNone(screenshots.latest(self.project, "about.html"))
+        self.assertIsNotNone(screenshots.latest(self.project, "home.html"))
         screenshots.clear(self.project)
         self.assertIsNone(screenshots.latest(self.project))
+
+    def test_previous_single_session_remains_available_for_its_page(self):
+        legacy = screenshots.project_dir(self.project) / "latest"
+        legacy.mkdir(parents=True)
+        (legacy / "session.json").write_text(json.dumps({"page": "about.html", "groups": [{
+            "images": [{"file": "about-mobile-01.png"}]}]}))
+        (legacy / "about-mobile-01.png").write_bytes(b"old screenshot")
+        self.assertIsNone(screenshots.latest(self.project, "home.html"))
+        self.assertEqual(b"old screenshot", screenshots.image_path(
+            self.project, "about-mobile-01.png", "about.html").read_bytes())
+        screenshots.clear(self.project, "about.html")
+        self.assertIsNone(screenshots.latest(self.project, "about.html"))
 
 
 if __name__ == "__main__":

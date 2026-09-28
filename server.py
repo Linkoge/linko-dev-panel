@@ -19,7 +19,7 @@ import screenshots
 PANEL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PANEL_DIR / "projects.json"
 PROJECTS = load_projects(CONFIG_PATH)
-VERSION = "1.2"
+VERSION = "1.3.0"
 HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LINKO_PANEL_PORT", "8765"))
 MAX_BODY = 16_384
@@ -143,10 +143,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith("/api/"):
                 project = project_from(query.get("project", [None])[0])
                 if path == "/api/screenshots":
-                    self.send_json({"ok": True, **screenshots.status(project)})
+                    self.send_json({"ok": True, **screenshots.status(project, query.get("page", [None])[0])})
                 elif path == "/api/screenshots/image":
                     filename = query.get("file", [""])[0]
-                    image = screenshots.image_path(project, filename)
+                    image = screenshots.image_path(project, filename, query.get("page", [None])[0])
                     if image is None:
                         self.error("Screenshot not found.", HTTPStatus.NOT_FOUND)
                     else:
@@ -236,9 +236,9 @@ class Handler(BaseHTTPRequestHandler):
                     address = f"[{address}]"
                 origin = f"http://{address}:{port}"
                 screenshots.start(project, body, origin)
-                self.send_json({"ok": True, **screenshots.status(project)}, HTTPStatus.ACCEPTED)
+                self.send_json({"ok": True, **screenshots.status(project, body.get("page"))}, HTTPStatus.ACCEPTED)
             elif path == "/api/screenshots/clear":
-                screenshots.clear(project)
+                screenshots.clear(project, body.get("page"))
                 self.send_json({"ok": True})
             else:
                 self.error("Not found.", HTTPStatus.NOT_FOUND)

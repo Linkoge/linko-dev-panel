@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import server
+import screenshots
 from repository import Project, load_projects
 
 
@@ -69,7 +70,7 @@ class PanelTests(unittest.TestCase):
     def test_allowlist_and_preview(self):
         status, projects = self.request("GET", "/api/projects")
         self.assertEqual(200, status)
-        self.assertEqual("1.2", projects["version"])
+        self.assertEqual("1.3.0", projects["version"])
         self.assertEqual(400, self.request("GET", "/api/status?project=/tmp")[0])
         self.assertEqual(200, self.request("GET", "/site/One/preview/index.html")[0])
         self.assertEqual(200, self.request("GET", f"/versions/One/{self.initial}/preview/index.html")[0])
@@ -100,8 +101,24 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(400, self.request("POST", "/api/screenshots/capture", {
             "project": "Unknown", "page": "index.html", "devices": "mobile"})[0])
         with patch("server.screenshots.clear") as clear:
-            self.assertEqual(200, self.request("POST", "/api/screenshots/clear", {"project": "One"})[0])
-            clear.assert_called_once_with(self.project)
+            self.assertEqual(200, self.request("POST", "/api/screenshots/clear", {"project": "One", "page": "index.html"})[0])
+            clear.assert_called_once_with(self.project, "index.html")
+        self.assertEqual(400, self.request("GET", "/api/screenshots?project=One&page=unconfigured.html")[0])
+
+    def test_screenshot_api_returns_only_the_selected_pages_images(self):
+        project = Project("One", self.repo, "origin", "index.html", ("index.html", "about.html"))
+        with patch.dict(server.PROJECTS, {"One": project}), patch.object(screenshots, "ROOT", Path(self.temp.name) / "shots"):
+            for page in ("index.html", "about.html"):
+                folder = screenshots.page_dir(project, page) / "latest"
+                folder.mkdir(parents=True)
+                filename = f"{Path(page).stem}-mobile-01.png"
+                (folder / filename).write_bytes(page.encode())
+                (folder / "session.json").write_text(json.dumps({"page": page, "groups": [{
+                    "device": "mobile", "images": [{"file": filename, "number": 1}]}]}))
+            self.assertEqual("about.html", self.request("GET", "/api/screenshots?project=One&page=about.html")[1]["session"]["page"])
+            self.assertEqual("index.html", self.request("GET", "/api/screenshots?project=One&page=index.html")[1]["session"]["page"])
+            self.assertEqual((200, b"about.html"), self.request("GET", "/api/screenshots/image?project=One&page=about.html&file=about-mobile-01.png"))
+            self.assertEqual(404, self.request("GET", "/api/screenshots/image?project=One&page=index.html&file=about-mobile-01.png")[0])
 
     def test_commit_push_pull_and_relationship(self):
         (self.repo / "index.html").write_text("updated\n")

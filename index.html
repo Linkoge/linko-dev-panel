@@ -562,9 +562,10 @@
     $('shotResults').classList.add('hidden');
   }
 
-  const shotUrl = (file, download = false) => `/api/screenshots/image?${projectParam()}&file=${encodeURIComponent(file)}${download ? '&download=1' : ''}`;
+  const shotUrl = (file, page, download = false) => `/api/screenshots/image?${projectParam()}&page=${encodeURIComponent(page)}&file=${encodeURIComponent(file)}${download ? '&download=1' : ''}`;
 
   function renderShots(session) {
+    shownShotSession = session?.id || null;
     $('shotResults').classList.toggle('hidden', !session);
     if (!session) return;
     const count = session.groups.reduce((total, group) => total + group.images.length, 0);
@@ -579,23 +580,23 @@
         const card = document.createElement('div'); card.className = 'shot-item';
         const open = document.createElement('button'); open.className = 'shot-open';
         open.setAttribute('aria-label', `Preview ${group.device} screenshot ${shot.number}`);
-        const image = document.createElement('img'); image.src = shotUrl(shot.file); image.loading = 'lazy';
+        const image = document.createElement('img'); image.src = shotUrl(shot.file, session.page); image.loading = 'lazy';
         image.alt = `${group.device} screenshot ${shot.number}`; open.append(image);
         open.onclick = () => {
           $('shotPreviewTitle').textContent = `${group.device.toUpperCase()} ${String(shot.number).padStart(2, '0')}`;
-          $('shotPreviewImage').src = shotUrl(shot.file);
-          $('shotPreviewDownload').href = shotUrl(shot.file, true);
+          $('shotPreviewImage').src = shotUrl(shot.file, session.page);
+          $('shotPreviewDownload').href = shotUrl(shot.file, session.page, true);
           $('shotPreviewDownload').download = shot.file;
           $('shotPreview').showModal();
         };
         const meta = document.createElement('div'); meta.className = 'shot-meta';
         const label = document.createElement('label');
         const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = true;
-        checkbox.className = 'shot-select'; checkbox.dataset.file = shot.file;
+        checkbox.className = 'shot-select'; checkbox.dataset.file = shot.file; checkbox.dataset.page = session.page;
         label.append(checkbox, document.createTextNode(` ${String(shot.number).padStart(2, '0')} · ${group.device}`));
         meta.append(label);
         const download = document.createElement('a'); download.className = 'button shot-download';
-        download.textContent = 'DOWNLOAD PNG'; download.href = shotUrl(shot.file, true); download.download = shot.file;
+        download.textContent = 'DOWNLOAD PNG'; download.href = shotUrl(shot.file, session.page, true); download.download = shot.file;
         card.append(open, meta, download); grid.append(card);
       }
       section.append(grid);
@@ -605,26 +606,28 @@
       }
       $('shotGroups').append(section);
     }
-    shownShotSession = session.id;
   }
 
   async function loadScreenshots() {
     if (!selectedProject || shotPolling) return;
     shotPolling = true;
     const project = selectedProject;
+    const page = $('capturePage').value;
     try {
-      const result = await api('/api/screenshots');
-      if (project !== selectedProject) return;
+      const result = await api(page ? `/api/screenshots?page=${encodeURIComponent(page)}` : '/api/screenshots');
+      if (project !== selectedProject || page !== $('capturePage').value) return;
       const job = result.job;
       captureRunning = Boolean(job?.running);
       $('captureButton').disabled = captureRunning || !(capturePagesByProject[selectedProject] || []).length;
       $('clearShots').disabled = captureRunning;
       if (captureRunning) {
-        $('captureStatus').textContent = `${job.phase || 'Capturing'}${job.device ? ` ${job.device}` : ''}${job.current ? ` · ${job.current} PNGs` : ''}… You can leave this page and return.`;
-      } else if (job?.error) {
+        $('captureStatus').textContent = `${job.phase || 'Capturing'} ${job.page}${job.device ? ` · ${job.device}` : ''}${job.current ? ` · ${job.current} PNGs` : ''}… You can leave this page and return.`;
+      } else if (job?.error && job.page === page) {
         $('captureStatus').textContent = `Capture failed: ${job.error}`;
-      } else if (job?.phase === 'Complete') {
+      } else if (job?.phase === 'Complete' && job.page === page) {
         $('captureStatus').textContent = 'Capture complete.';
+      } else {
+        $('captureStatus').textContent = !page ? 'This project has no configured website pages.' : result.session ? '' : `No saved screenshots for ${page}.`;
       }
       if (result.session?.id !== shownShotSession) renderShots(result.session);
     } catch (error) { $('captureStatus').textContent = error.message; }
@@ -633,6 +636,12 @@
 
   $('repositoryTab').onclick = () => setView('repository');
   $('screenshotsTab').onclick = () => setView('screenshots');
+  $('capturePage').onchange = () => {
+    shownShotSession = null;
+    renderShots(null);
+    $('captureStatus').textContent = 'Loading saved screenshots…';
+    loadScreenshots();
+  };
   $('captureOverlap').oninput = () => $('overlapValue').textContent = `${$('captureOverlap').value}%`;
   $('captureButton').onclick = async () => {
     $('captureButton').disabled = true;
@@ -649,17 +658,17 @@
   };
   $('selectAllShots').onclick = () => document.querySelectorAll('.shot-select').forEach(box => { box.checked = true; });
   $('downloadSelected').onclick = () => {
-    const files = [...document.querySelectorAll('.shot-select:checked')].map(box => box.dataset.file);
+    const files = [...document.querySelectorAll('.shot-select:checked')].map(box => ({file:box.dataset.file, page:box.dataset.page}));
     if (!files.length) { $('captureStatus').textContent = 'Select at least one screenshot.'; return; }
-    for (const file of files) {
-      const anchor = document.createElement('a'); anchor.href = shotUrl(file, true);
+    for (const {file, page} of files) {
+      const anchor = document.createElement('a'); anchor.href = shotUrl(file, page, true);
       anchor.download = file; document.body.append(anchor); anchor.click(); anchor.remove();
     }
   };
   $('clearShots').onclick = async () => {
-    if (!window.confirm('Delete the saved screenshots for this project?')) return;
+    if (!window.confirm(`Delete saved screenshots for ${$('capturePage').value}?`)) return;
     try {
-      await api('/api/screenshots/clear', {method:'POST'});
+      await api('/api/screenshots/clear', {method:'POST', body:{page:$('capturePage').value}});
       shownShotSession = null; renderShots(null); $('captureStatus').textContent = 'Saved screenshots cleared.';
     } catch (error) { $('captureStatus').textContent = error.message; }
   };

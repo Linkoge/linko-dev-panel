@@ -55,6 +55,11 @@ async function readyImages(page) {
     ]);
   });
 }
+function assertCapturePage(page) {
+  if (new URL(page.url()).pathname !== new URL(config.url).pathname) {
+    throw new Error(`Selected page changed during capture: ${page.url()}`);
+  }
+}
 async function captureDevice(browser, device) {
   const preset = presets[device];
   const {width, height, ...deviceOptions} = preset;
@@ -68,7 +73,9 @@ async function captureDevice(browser, device) {
         page.close().catch(() => {});
       }
     });
-    await page.goto(config.url, {waitUntil: 'domcontentloaded', timeout: 30000});
+    const response = await page.goto(config.url, {waitUntil: 'domcontentloaded', timeout: 30000});
+    if (!response?.ok()) throw new Error(`Selected page returned HTTP ${response?.status() ?? 'no response'}.`);
+    assertCapturePage(page);
     await page.waitForLoadState('load', {timeout: 15000}).catch(() => {});
     await page.evaluate(() => Promise.race([
       document.fonts.ready, new Promise(resolve => setTimeout(resolve, 10000))
@@ -92,9 +99,11 @@ async function captureDevice(browser, device) {
       const target = Math.min(y, bottom);
       await moveTo(page, target);
       await delay(config.settleMs);
+      assertCapturePage(page);
       await readyImages(page);
       const filename = `${device}-raw-${String(i + 1).padStart(3, '0')}.png`;
       await delay(100);
+      assertCapturePage(page);
       await page.screenshot({path: path.join(config.outputDir, filename)});
       const state = await page.evaluate(() => ({
         scrollY: Math.round(window.scrollY),

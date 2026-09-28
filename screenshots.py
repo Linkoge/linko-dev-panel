@@ -22,7 +22,7 @@ JOBS: dict[str, dict[str, object]] = {}
 
 # Interrupted captures never become the latest session. Recover a prior session
 # if the process stopped during the brief rename between old and latest.
-for directory in ROOT.glob("*"):
+for directory in (*ROOT.glob("*"), *ROOT.glob("*/pages/*")):
     if not directory.is_dir():
         continue
     old = directory / "old"
@@ -43,25 +43,52 @@ def project_dir(project: Project) -> Path:
     return ROOT / hashlib.sha256(key).hexdigest()[:16]
 
 
-def latest(project: Project) -> dict[str, object] | None:
-    path = project_dir(project) / "latest" / "session.json"
+def page_dir(project: Project, page: str) -> Path:
+    return project_dir(project) / "pages" / hashlib.sha256(page.encode("utf-8")).hexdigest()[:16]
+
+
+def selected_page(project: Project, page: str | None) -> str | None:
+    if page is None:
+        return pages(project)[0] if pages(project) else None
+    if page not in pages(project):
+        raise ValueError("Select a configured screenshot page.")
+    return page
+
+
+def session_folder(project: Project, page: str) -> Path | None:
+    current = page_dir(project, page) / "latest"
+    if (current / "session.json").is_file():
+        return current
+    # Captures made before page-specific storage remain available for their page.
+    legacy = project_dir(project) / "latest"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+        if json.loads((legacy / "session.json").read_text(encoding="utf-8")).get("page") == page:
+            return legacy
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def latest(project: Project, page: str | None = None) -> dict[str, object] | None:
+    page = selected_page(project, page)
+    if page is None:
         return None
+    folder = session_folder(project, page)
+    return json.loads((folder / "session.json").read_text(encoding="utf-8")) if folder else None
 
 
-def status(project: Project) -> dict[str, object]:
+def status(project: Project, page: str | None = None) -> dict[str, object]:
+    page = selected_page(project, page)
     with LOCK:
         job = dict(JOBS.get(project.name, {}))
     if job.get("running"):
-        progress_path = project_dir(project) / str(job["work"]) / "progress.json"
+        progress_path = page_dir(project, str(job["page"])) / str(job["work"]) / "progress.json"
         try:
             job.update(json.loads(progress_path.read_text(encoding="utf-8")))
         except (FileNotFoundError, json.JSONDecodeError):
             pass
     job.pop("work", None)
-    return {"job": job or None, "session": latest(project)}
+    return {"job": job or None, "session": latest(project, page)}
 
 
 def validate(project: Project, body: dict[str, object]) -> tuple[str, list[str], int, int]:
@@ -94,13 +121,13 @@ def start(project: Project, body: dict[str, object], origin: str) -> None:
     chrome = os.environ.get("LINKO_PANEL_CHROME") or shutil.which("google-chrome") or shutil.which("chromium")
     if not node or not chrome or not (ENGINE.parent / "node_modules" / "playwright").is_dir():
         raise RuntimeError("Screenshot browser is unavailable. Install Node, Playwright (npm ci), and Chromium; configure LINKO_PANEL_NODE or LINKO_PANEL_CHROME if needed.")
-    directory = project_dir(project)
+    directory = page_dir(project, page)
     work = f"work-{uuid.uuid4().hex}"
     with LOCK:
         if any(item.get("running") for item in JOBS.values()):
             raise ValueError("A screenshot capture is already running.")
         (directory / work).mkdir(parents=True)
-        JOBS[project.name] = {"running": True, "phase": "Starting browser", "work": work}
+        JOBS[project.name] = {"running": True, "phase": "Starting browser", "page": page, "work": work}
     config = {"url": f"{origin}/site/{quote(project.name, safe='')}/preview/{quote(page, safe='/')}",
               "origin": origin, "outputDir": str(directory / work), "devices": devices,
               "overlap": overlap, "settleMs": settle_ms, "chromeBinary": chrome}
@@ -126,7 +153,7 @@ def _similar(previous: Path, current: Path) -> bool:
 
 def _run(project: Project, page: str, devices: list[str], overlap: int, settle_ms: int,
          node: str, config: dict[str, object], work: str) -> None:
-    directory = project_dir(project)
+    directory = page_dir(project, page)
     folder = directory / work
     try:
         result = subprocess.run([node, str(ENGINE)], input=json.dumps(config), text=True,
@@ -164,28 +191,40 @@ def _run(project: Project, page: str, devices: list[str], overlap: int, settle_m
         folder.rename(current)
         shutil.rmtree(old, ignore_errors=True)
         with LOCK:
-            JOBS[project.name] = {"running": False, "phase": "Complete"}
+            JOBS[project.name] = {"running": False, "phase": "Complete", "page": page}
     except Exception as exc:
         if not (directory / "latest").exists() and (directory / "old").exists():
             (directory / "old").rename(directory / "latest")
         shutil.rmtree(folder, ignore_errors=True)
         with LOCK:
-            JOBS[project.name] = {"running": False, "phase": "Failed", "error": str(exc)}
+            JOBS[project.name] = {"running": False, "phase": "Failed", "page": page, "error": str(exc)}
 
 
-def clear(project: Project) -> None:
+def clear(project: Project, page: str | None = None) -> None:
+    page = selected_page(project, page)
     with LOCK:
         if JOBS.get(project.name, {}).get("running"):
             raise ValueError("Wait for the current capture to finish before clearing screenshots.")
         JOBS.pop(project.name, None)
-        shutil.rmtree(project_dir(project), ignore_errors=True)
+        if page is not None:
+            shutil.rmtree(page_dir(project, page), ignore_errors=True)
+            legacy = project_dir(project) / "latest"
+            try:
+                if json.loads((legacy / "session.json").read_text(encoding="utf-8")).get("page") == page:
+                    shutil.rmtree(legacy, ignore_errors=True)
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
 
 
-def image_path(project: Project, filename: str) -> Path | None:
-    session = latest(project)
-    if not session or not isinstance(filename, str):
+def image_path(project: Project, filename: str, page: str | None = None) -> Path | None:
+    page = selected_page(project, page)
+    if page is None or not isinstance(filename, str):
         return None
+    folder = session_folder(project, page)
+    if folder is None:
+        return None
+    session = json.loads((folder / "session.json").read_text(encoding="utf-8"))
     if not any(image["file"] == filename for group in session["groups"] for image in group["images"]):
         return None
-    path = project_dir(project) / "latest" / filename
+    path = folder / filename
     return path if path.is_file() else None
