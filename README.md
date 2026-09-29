@@ -1,6 +1,6 @@
 # Dev Panel
 
-**Version 1.3.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. The server uses Python's standard library and your installed Git. Screenshot capture uses Playwright and Chrome or Chromium.
+**Version 1.4.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. The server uses Python's standard library and your installed Git. Screenshot capture uses Playwright and Chrome or Chromium.
 
 ## What it does
 
@@ -12,6 +12,14 @@
 - Captures Mobile (390 × 844), Desktop (1440 × 900), or Both as overlapping viewport PNGs after scrolling the page in a real browser. The Screenshots view previews and downloads the images.
 
 Actions apply only to repositories named in `projects.json`. The panel does not copy repositories or accept arbitrary paths from the browser.
+
+## Linko Products editor
+
+The Linko project has `"catalogue": true` in `projects.json`, which enables the private **Products** tab for that project only. It edits the catalogue that supplies product, service, and package cards, one-level categories, and optional generated detail pages. You can change titles, prices, availability, visibility, links, descriptions, specifications, galleries, and images; add or duplicate hidden drafts; and reorder cards or category entries. Hidden items can be included while editing. Removing a product from a category removes only its membership, not the product itself.
+
+**Save & Generate** validates the complete catalogue, writes its JSON source files, and regenerates the static HTML pages. A stale editor tab is rejected and must be reloaded. **Preview HTML** opens the local generated page. Saving does not commit, push, or deploy. Use the Repository tab to review and commit, then explicitly push; commit preparation and push check that generated catalogue HTML is current. Other configured projects keep their existing behavior.
+
+The image picker can search approved project images and upload new images (up to 8 MB) to the Linko project's `assets/product-images/` folder. Upload validation requires Python Pillow (`python3 -m pip install Pillow` if it is not already available). The panel uses its existing private-network access, CSRF token, origin check, and configured project allowlist. It has no login; keep its port restricted to trusted devices. See the Linko repository's `docs/catalogue-editor.md` for editing, watcher, recovery, and publishing instructions.
 
 ## Quick start
 

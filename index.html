@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#160805">
   <title>Dev Panel</title>
+  <link rel="stylesheet" href="/catalogue-editor.css">
   <style>
     :root { color-scheme: dark; --bg:#120704; --card:#21100a; --line:#542819; --text:#fff0e7; --muted:#c8947c; --blue:#ff7043; --green:#ff9a55; --red:#ff5d3b; --amber:#ffad5c; }
     * { box-sizing:border-box; }
@@ -97,7 +98,7 @@
 <main>
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
   <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
-  <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button></nav>
+  <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button><button id="productsTab" class="hidden">Products</button></nav>
   <div id="repositoryView">
 
   <section class="card historical hidden" id="historical">
@@ -176,6 +177,7 @@
       <button class="danger" id="clearShots" style="margin-top:18px">CLEAR SAVED SCREENSHOTS</button>
     </section>
   </div>
+  <div id="productsView" class="hidden"></div>
 </main>
 
 <dialog id="modal"><div class="modal-body">
@@ -184,6 +186,7 @@
   <div class="grid"><button id="modalCancel">CANCEL</button><button class="primary" id="modalConfirm">CONFIRM</button></div>
 </div></dialog>
 <dialog id="shotPreview"><div class="modal-body"><h2 id="shotPreviewTitle"></h2><img id="shotPreviewImage" alt="Screenshot preview"><div class="grid"><button id="closeShotPreview">CLOSE</button><a class="button primary" id="shotPreviewDownload" download>DOWNLOAD PNG</a></div></div></dialog>
+<dialog id="catalogueImageDialog"><div class="modal-body"><h2>Choose a product image</h2><label for="catalogueImageSearch">Search project images</label><input id="catalogueImageSearch" type="search"><div id="catalogueImageResults"></div><label for="catalogueImageUpload">Or upload from this device</label><input id="catalogueImageUpload" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif"><button id="catalogueImageClose">CLOSE</button></div></dialog>
 
 <script>
   let csrf = '';
@@ -193,6 +196,7 @@
   let currentPreviewUrl = null;
   let viewGeneration = 0;
   let capturePagesByProject = {};
+  let catalogueByProject = {};
   let shownShotSession = null;
   let shotPolling = false;
   let captureRunning = false;
@@ -522,14 +526,17 @@
         const option = document.createElement('option'); option.value = item.name; option.textContent = item.name;
         option.dataset.previewUrl = item.previewUrl || ''; $('project').append(option);
         capturePagesByProject[item.name] = item.capturePages || [];
+        catalogueByProject[item.name] = Boolean(item.catalogue);
       }
       const stored = localStorage.getItem('devPanelProject');
       selectedProject = data.projects.some(p => p.name === stored) ? stored : data.projects[0].name;
       $('project').value = selectedProject;
+      $('productsTab').classList.toggle('hidden', !catalogueByProject[selectedProject]);
       updatePreview();
       updateCapturePages();
       await refresh();
-      setView(localStorage.getItem('devPanelView') === 'screenshots' ? 'screenshots' : 'repository');
+      const preferred = localStorage.getItem('devPanelView');
+      setView(preferred === 'products' && catalogueByProject[selectedProject] ? 'products' : preferred === 'screenshots' ? 'screenshots' : 'repository');
     } catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
   }
 
@@ -538,15 +545,24 @@
   }
 
   function setView(view) {
+    if (view !== 'products' && !$('productsView').classList.contains('hidden') && window.catalogueEditor?.dirty()) {
+      if (!window.confirm('Discard unsaved product changes?')) return;
+      window.catalogueEditor.discard();
+    }
     const shots = view === 'screenshots';
+    const products = view === 'products' && catalogueByProject[selectedProject];
     $('screenshotsView').classList.toggle('hidden', !shots);
-    $('repositoryView').classList.toggle('hidden', shots);
+    $('productsView').classList.toggle('hidden', !products);
+    $('repositoryView').classList.toggle('hidden', shots || products);
     $('screenshotsTab').classList.toggle('active', shots);
-    $('repositoryTab').classList.toggle('active', !shots);
+    $('productsTab').classList.toggle('active', products);
+    $('repositoryTab').classList.toggle('active', !shots && !products);
     $('screenshotsTab').setAttribute('aria-current', shots ? 'page' : 'false');
-    $('repositoryTab').setAttribute('aria-current', shots ? 'false' : 'page');
+    $('productsTab').setAttribute('aria-current', products ? 'page' : 'false');
+    $('repositoryTab').setAttribute('aria-current', shots || products ? 'false' : 'page');
     localStorage.setItem('devPanelView', view);
     if (shots) loadScreenshots();
+    if (products) window.catalogueEditor?.load();
   }
 
   function updateCapturePages() {
@@ -636,6 +652,7 @@
 
   $('repositoryTab').onclick = () => setView('repository');
   $('screenshotsTab').onclick = () => setView('screenshots');
+  $('productsTab').onclick = () => setView('products');
   $('capturePage').onchange = () => {
     shownShotSession = null;
     renderShots(null);
@@ -677,17 +694,25 @@
   setInterval(() => { if (captureRunning || !$('screenshotsView').classList.contains('hidden')) loadScreenshots(); }, 1800);
 
   $('project').onchange = async () => {
+    if (window.catalogueEditor?.dirty() && !window.confirm('Discard unsaved product changes?')) { $('project').value = selectedProject; return; }
+    window.catalogueEditor?.discard();
     viewGeneration += 1;
     selectedProject = $('project').value;
+    $('productsTab').classList.toggle('hidden', !catalogueByProject[selectedProject]);
+    if (!catalogueByProject[selectedProject] && !$('productsView').classList.contains('hidden')) setView('repository');
     localStorage.setItem('devPanelProject', selectedProject);
     updatePreview();
     updateCapturePages();
     $('notice').className = 'card';
     await refresh();
+    if (!$('productsView').classList.contains('hidden')) await window.catalogueEditor?.load(true);
     if (!$('screenshotsView').classList.contains('hidden')) await loadScreenshots();
   };
 
+  window.catalogueApi = api;
+  window.catalogueProject = () => selectedProject;
   start();
 </script>
+<script src="/catalogue-editor.js"></script>
 </body>
 </html>

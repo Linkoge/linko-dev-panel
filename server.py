@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from repository import GitError, Project, load_projects, snapshot
 import screenshots
+import catalogue_backend
 
 PANEL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PANEL_DIR / "projects.json"
@@ -91,14 +92,14 @@ class Handler(BaseHTTPRequestHandler):
     def error(self, message: str, status: int = HTTPStatus.BAD_REQUEST, output: str = "") -> None:
         self.send_json({"ok": False, "error": message, "output": output}, status)
 
-    def read_json(self) -> dict[str, object]:
+    def read_json(self, max_body: int = MAX_BODY) -> dict[str, object]:
         if self.headers.get("Content-Type", "").split(";", 1)[0].strip() != "application/json":
             raise ValueError("Content-Type must be application/json.")
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("Invalid request size.") from exc
-        if length < 0 or length > MAX_BODY:
+        if length < 0 or length > max_body:
             raise ValueError("Request is too large.")
         try:
             value = json.loads(self.rfile.read(length) or b"{}")
@@ -134,10 +135,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in {"/", "/index.html", "/panel", "/panel/", "/dev-panel", "/dev-panel/"}:
                 self.serve_file(PANEL_DIR / "index.html", panel=True)
+            elif path in {'/catalogue-editor.js','/catalogue-editor.css'}:
+                self.serve_file(PANEL_DIR / path.lstrip('/'), panel=True)
             elif path == "/api/projects":
                 self.send_json({"ok": True, "version": VERSION, "projects": [{"name": p.name, "previewUrl":
                                 f"/site/{quote(p.name, safe='')}/preview/{quote(p.preview, safe='/')}" if p.preview else None,
-                                "capturePages": list(screenshots.pages(p))}
+                                "capturePages": list(screenshots.pages(p)), "catalogue": catalogue_backend.enabled(p)}
                                 for p in PROJECTS.values()],
                                 "csrfToken": CSRF_TOKEN})
             elif path.startswith("/api/"):
@@ -153,6 +156,10 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_screenshot(image, query.get("download", ["0"])[0] == "1")
                 elif path == "/api/status":
                     self.send_json({"ok": True, **project.status(RETURN_BRANCHES.get(project.name))})
+                elif path == "/api/catalogue":
+                    self.send_json({"ok": True, **catalogue_backend.snapshot(project)})
+                elif path == "/api/catalogue/images":
+                    self.send_json({"ok": True, "images": catalogue_backend.images(project, query.get('q',[''])[0])})
                 elif path == "/api/diff":
                     self.send_json({"ok": True, **project.diff()})
                 elif path == "/api/history":
@@ -201,15 +208,16 @@ class Handler(BaseHTTPRequestHandler):
         if not self.valid_post_security():
             return
         try:
-            body = self.read_json()
-            project = project_from(body.get("project"))
             path = urlsplit(self.path).path
+            body = self.read_json(11_000_000 if path == '/api/catalogue/upload' else 2_000_000 if path == '/api/catalogue/save' else MAX_BODY)
+            project = project_from(body.get("project"))
             if path == "/api/commit/prepare":
                 self.prepare_commit(project, body)
             elif path == "/api/commit/confirm":
                 self.confirm_commit(project, body)
             elif path == "/api/push":
                 with OPERATION_LOCK:
+                    if catalogue_backend.enabled(project): catalogue_backend.engine(project.path).generate(check=True)
                     output = project.push()
                 self.send_json({"ok": True, "output": output, **project.status(RETURN_BRANCHES.get(project.name))})
             elif path == "/api/pull":
@@ -240,8 +248,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/screenshots/clear":
                 screenshots.clear(project, body.get("page"))
                 self.send_json({"ok": True})
+            elif path == '/api/catalogue/save':
+                self.send_json({'ok':True,**catalogue_backend.save(project,body)})
+            elif path == '/api/catalogue/upload':
+                self.send_json({'ok':True,**catalogue_backend.upload(project,body)})
             else:
                 self.error("Not found.", HTTPStatus.NOT_FOUND)
+        except catalogue_backend.ConflictError as exc:
+            self.error(str(exc), HTTPStatus.CONFLICT)
         except ValueError as exc:
             self.error(str(exc))
         except GitError as exc:
@@ -253,6 +267,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def prepare_commit(self, project: Project, body: dict[str, object]) -> None:
         project.require_branch()
+        if catalogue_backend.enabled(project): catalogue_backend.engine(project.path).generate(check=True)
         message = body.get("message")
         if not isinstance(message, str) or not message.strip():
             raise ValueError("Enter a commit message.")
@@ -269,6 +284,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def confirm_commit(self, project: Project, body: dict[str, object]) -> None:
         with OPERATION_LOCK:
+            if catalogue_backend.enabled(project): catalogue_backend.engine(project.path).generate(check=True)
             item = take_confirmation(body.get("confirmation"), "commit", project)
             project.require_branch()
             if project.review_state() != item["state"]:
