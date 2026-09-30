@@ -71,7 +71,7 @@ class PanelTests(unittest.TestCase):
     def test_allowlist_and_preview(self):
         status, projects = self.request("GET", "/api/projects")
         self.assertEqual(200, status)
-        self.assertEqual("1.3.0", projects["version"])
+        self.assertEqual("1.5.0", projects["version"])
         self.assertEqual(400, self.request("GET", "/api/status?project=/tmp")[0])
         self.assertEqual(200, self.request("GET", "/site/One/preview/index.html")[0])
         self.assertEqual(200, self.request("GET", f"/versions/One/{self.initial}/preview/index.html")[0])

@@ -1,6 +1,6 @@
 # Dev Panel
 
-**Version 1.4.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. It runs natively on Windows 10/11 and Linux. The HTTP server uses Python's standard library and your installed Git; image validation uses Pillow. Screenshot capture uses Playwright and Chrome or Chromium.
+**Version 1.5.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. It runs natively on Windows 10/11 and Linux. The HTTP server uses Python's standard library and your installed Git; image validation uses Pillow. Screenshot capture uses Playwright and Chrome or Chromium.
 
 ## What it does
 

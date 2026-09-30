@@ -25,7 +25,7 @@ except ModuleNotFoundError as exc:
 
 PANEL_DIR = Path(__file__).resolve().parent
 PROJECTS: dict[str, Project] = {}
-VERSION = "1.3.0"
+VERSION = "1.5.0"
 HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
 PORT = 8765
 MAX_BODY = 16_384
