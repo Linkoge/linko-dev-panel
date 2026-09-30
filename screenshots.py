@@ -11,9 +11,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import quote
-
-from repository import Project
+from repository import Project, preview_url
 
 ROOT = Path(__file__).resolve().parent / "screenshots"
 ENGINE = Path(__file__).resolve().parent / "capture.mjs"
@@ -115,10 +113,30 @@ def node_binary() -> str | None:
     return str(candidates[-1]) if candidates else None
 
 
+def chrome_binary() -> str | None:
+    configured = os.environ.get("LINKO_PANEL_CHROME")
+    if configured:
+        return configured
+    for name in ("google-chrome", "chromium", "chromium-browser", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    # Windows browsers are usually installed outside PATH. Environment-based
+    # locations cover machine-wide and per-user installs without fixed users.
+    for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        base = os.environ.get(variable)
+        if base:
+            for browser in ("Google/Chrome", "Chromium"):
+                candidate = Path(base) / browser / "Application" / "chrome.exe"
+                if candidate.is_file():
+                    return str(candidate)
+    return None
+
+
 def start(project: Project, body: dict[str, object], origin: str) -> None:
     page, devices, overlap, settle_ms = validate(project, body)
     node = node_binary()
-    chrome = os.environ.get("LINKO_PANEL_CHROME") or shutil.which("google-chrome") or shutil.which("chromium")
+    chrome = chrome_binary()
     if not node or not chrome or not (ENGINE.parent / "node_modules" / "playwright").is_dir():
         raise RuntimeError("Screenshot browser is unavailable. Install Node, Playwright (npm ci), and Chromium; configure LINKO_PANEL_NODE or LINKO_PANEL_CHROME if needed.")
     directory = page_dir(project, page)
@@ -128,7 +146,7 @@ def start(project: Project, body: dict[str, object], origin: str) -> None:
             raise ValueError("A screenshot capture is already running.")
         (directory / work).mkdir(parents=True)
         JOBS[project.name] = {"running": True, "phase": "Starting browser", "page": page, "work": work}
-    config = {"url": f"{origin}/site/{quote(project.name, safe='')}/preview/{quote(page, safe='/')}",
+    config = {"url": origin + preview_url(project.name, page),
               "origin": origin, "outputDir": str(directory / work), "devices": devices,
               "overlap": overlap, "settleMs": settle_ms, "chromeBinary": chrome}
     threading.Thread(target=_run, args=(project, page, devices, overlap, settle_ms, node, config, work), daemon=True).start()
@@ -158,7 +176,8 @@ def _run(project: Project, page: str, devices: list[str], overlap: int, settle_m
     try:
         result = subprocess.run([node, str(ENGINE)], input=json.dumps(config), text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600,
-                                cwd=ENGINE.parent, check=False)
+                                cwd=ENGINE.parent, check=False, shell=False,
+                                encoding="utf-8", errors="replace")
         if result.returncode:
             raise RuntimeError((result.stderr or "Browser capture failed.").strip()[-2000:])
         raw = json.loads(result.stdout)

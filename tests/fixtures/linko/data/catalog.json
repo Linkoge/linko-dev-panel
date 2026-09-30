@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "root": [
+    {
+      "type": "product",
+      "id": "mounts"
+    }
+  ],
+  "categories": []
+}

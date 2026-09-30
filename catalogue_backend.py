@@ -2,7 +2,6 @@
 from __future__ import annotations
 import base64
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -11,6 +10,8 @@ import tempfile
 import threading
 from pathlib import Path
 from PIL import Image, UnidentifiedImageError
+from catalogue_compat import load_engine
+from repository import preview_url
 
 _LOCK = threading.RLock()
 _ID = re.compile(r'^[a-z][a-z0-9-]{1,63}$')
@@ -56,18 +57,14 @@ def _image_format(payload):
     except (UnidentifiedImageError,OSError) as exc: raise ValueError('File is not a valid supported image.') from exc
 
 def enabled(project):
-    config=json.loads((Path(__file__).resolve().parent/'projects.json').read_text())['projects'].get(project.name,{})
-    return config.get('catalogue') is True and Path(config.get('path','')).resolve()==project.path and (project.path/'catalogue.py').is_file()
+    return getattr(project,'catalogue',False) is True and (project.path/'catalogue.py').is_file()
 
 def require(project):
     if not enabled(project): raise ValueError('Catalogue is unavailable for this project.')
     return project.path
 
 def engine(root):
-    spec=importlib.util.spec_from_file_location('linko_catalogue',root/'catalogue.py')
-    module=importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_engine(root)
 
 def files(root):
     product_dir=root/'data/products'
@@ -80,7 +77,7 @@ def files(root):
 def revision(root):
     digest=hashlib.sha256()
     for path in files(root):
-        digest.update(str(path.relative_to(root)).encode());digest.update(b'\0');digest.update(path.read_bytes());digest.update(b'\0')
+        digest.update(path.relative_to(root).as_posix().encode('utf-8'));digest.update(b'\0');digest.update(path.read_bytes());digest.update(b'\0')
     return digest.hexdigest()
 
 def snapshot(project):
@@ -89,7 +86,7 @@ def snapshot(project):
         model=engine(root)
         catalog,products,_=model.load()
         return {'catalog':catalog,'products':products,'revision':revision(root),
-                'previewUrl':f'/site/Linko/preview/products.html'}
+                'previewUrl':preview_url(project.name,'products.html')}
 
 def images(project, term=''):
     root=require(project)
@@ -103,7 +100,9 @@ def images(project, term=''):
             if 'old' in path.parts: continue
             relative=path.relative_to(root).as_posix()
             if term not in relative.casefold(): continue
-            result.append({'path':relative,'name':path.name,'url':'/site/Linko/preview/'+relative})
+            try: url=preview_url(project.name,relative)
+            except ValueError: continue
+            result.append({'path':relative,'name':path.name,'url':url})
     return result[:500]
 
 def _atomic(path, data, root):
@@ -153,13 +152,15 @@ def upload(project,body):
     folder=root/'assets/product-images'
     if folder.is_symlink() or not folder.resolve().is_relative_to(root): raise ValueError('Unsafe image directory.')
     stem=re.sub(r'[^a-z0-9-]+','-',Path(name).stem.lower()).strip('-')[:48] or 'image'
+    if stem in {'con','prn','aux','nul'} or re.fullmatch(r'(com|lpt)[1-9]',stem): stem='image-'+stem
     with _LOCK:
+        folder.mkdir(parents=True,exist_ok=True)
         for n in range(10000):
             filename=f'{stem}{"-"+str(n) if n else ""}{_UPLOAD_FORMATS[fmt]}'
             target=folder/filename
             try:
                 with target.open('xb') as out: out.write(payload)
-                return {'path':target.relative_to(root).as_posix(),'url':'/site/Linko/preview/'+target.relative_to(root).as_posix(),
+                return {'path':target.relative_to(root).as_posix(),'url':preview_url(project.name,target.relative_to(root)),
                         'width':width,'height':height}
             except FileExistsError: continue
     raise ValueError('Unable to choose a unique image filename.')

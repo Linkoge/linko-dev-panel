@@ -4,6 +4,7 @@ import io
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -15,7 +16,7 @@ from PIL import Image
 import catalogue_backend as CB
 import server
 
-SOURCE=Path(__file__).resolve().parents[2]/'Linko'
+SOURCE=Path(__file__).resolve().parent/'fixtures/linko'
 
 class BackendTests(unittest.TestCase):
     def setUp(self):
@@ -26,8 +27,8 @@ class BackendTests(unittest.TestCase):
             dest=self.root/rel;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy(SOURCE/rel,dest)
         self.project=SimpleNamespace(name='Fixture',path=self.root)
         allow=patch.object(CB,'enabled',return_value=True);allow.start();self.addCleanup(allow.stop)
-        catalog=json.loads((self.root/'data/catalog.json').read_text());catalog['root']=[{'type':'product','id':'mounts'}]
-        (self.root/'data/catalog.json').write_text(json.dumps(catalog))
+        catalog=json.loads((self.root/'data/catalog.json').read_text(encoding='utf-8'));catalog['root']=[{'type':'product','id':'mounts'}]
+        (self.root/'data/catalog.json').write_text(json.dumps(catalog),encoding='utf-8')
         CB.engine(self.root).generate()
     def test_conflict_and_invalid_preserve_files(self):
         snap=CB.snapshot(self.project);proposed=copy.deepcopy(snap);proposed['products']['mounts']['title']['ka']='განახლება'
@@ -52,13 +53,18 @@ class BackendTests(unittest.TestCase):
         snap=CB.snapshot(self.project);bad=copy.deepcopy(snap);bad['products']['mounts']['image']['path']='../../etc/passwd'
         with self.assertRaisesRegex(ValueError,'image.path'):CB.save(self.project,bad)
         with self.assertRaisesRegex(ValueError,'valid supported image'):CB.upload(self.project,{'name':'bad.png','data':'c2NyaXB0'})
-        avif=(SOURCE/'assets/main-pics/hero-dekstop.avif').read_bytes()
+        avif=(SOURCE/'assets/main-pics/sample.avif').read_bytes()
         result=CB.upload(self.project,{'name':'phone.avif','data':base64.b64encode(avif).decode()})
         self.assertTrue(result['path'].endswith('.avif'))
         with self.assertRaisesRegex(ValueError,'AVIF'):
             CB.upload(self.project,{'name':'fake.avif','data':base64.b64encode(b'\x00\x00\x00\x18ftypavif' + b'\x00'*16).decode()})
+    def test_symlink_images_are_excluded(self):
         external=Path(self.tmp.name).parent/'not-an-image.png'
-        (self.root/'assets/product-images/escape.png').symlink_to(external)
+        try:
+            (self.root/'assets/product-images/escape.png').symlink_to(external)
+        except OSError as exc:
+            if sys.platform!='win32' or getattr(exc,'winerror',None)!=1314: raise
+            self.skipTest(f'Windows symlink permission is required: {exc}')
         self.assertFalse(any(item['path'].endswith('escape.png') for item in CB.images(self.project)))
     def test_edit_upload_reorder_category_and_draft_round_trip(self):
         picture=Image.new('RGB',(12,12),'red');stream=io.BytesIO();picture.save(stream,format='PNG')
@@ -76,13 +82,13 @@ class BackendTests(unittest.TestCase):
         current=CB.snapshot(self.project)
         self.assertEqual(current['catalog']['root'][0]['id'],'mount-group')
         self.assertEqual(current['products']['mounts']['image']['path'],first)
-        html=(self.root/'products.html').read_text()
+        html=(self.root/'products.html').read_text(encoding='utf-8')
         self.assertIn('სამაგრები ახალი',html);self.assertIn('25 ₾',html);self.assertNotIn('draft-one.html',html)
         self.assertTrue((self.root/'catalog-mount-group.html').is_file())
         current['products']['mounts']['visible']=False;CB.save(self.project,current)
-        self.assertNotIn('სამაგრები ახალი',(self.root/'catalog-mount-group.html').read_text())
+        self.assertNotIn('სამაგრები ახალი',(self.root/'catalog-mount-group.html').read_text(encoding='utf-8'))
         restored=CB.snapshot(self.project);restored['products']['mounts']['visible']=True;CB.save(self.project,restored)
-        self.assertIn('სამაგრები ახალი',(self.root/'catalog-mount-group.html').read_text())
+        self.assertIn('სამაგრები ახალი',(self.root/'catalog-mount-group.html').read_text(encoding='utf-8'))
     def test_private_routes_scope_csrf_and_conflict(self):
         other=SimpleNamespace(name='Other',path=self.root)
         def request(method,path,body=None,origin=None,token=None):
@@ -103,15 +109,19 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(request('POST','/api/catalogue/save',body,token='wrong')[0],403)
             self.assertEqual(request('POST','/api/catalogue/save',body,origin='http://evil.invalid',token=server.CSRF_TOKEN)[0],403)
             self.assertEqual(request('POST','/api/catalogue/save',body,token=server.CSRF_TOKEN)[0],200)
-            (self.root/'data/products/mounts.json').write_text((self.root/'data/products/mounts.json').read_text()+' ')
+            (self.root/'data/products/mounts.json').write_text((self.root/'data/products/mounts.json').read_text(encoding='utf-8')+' ',encoding='utf-8')
             self.assertEqual(request('POST','/api/catalogue/save',body,token=server.CSRF_TOKEN)[0],409)
     def test_watcher_skips_output_already_built_by_save(self):
-        process=subprocess.Popen(['python3',str(self.root/'catalogue.py'),'watch'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        process=subprocess.Popen([sys.executable,'-c',
+            'import sys; from pathlib import Path; from catalogue_backend import engine; engine(Path(sys.argv[1])).watch()',
+            str(self.root)],cwd=Path(__file__).resolve().parents[1],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         self.addCleanup(lambda:(process.terminate(),process.wait(timeout=3)) if process.poll() is None else None)
         time.sleep(.3)
+        self.assertIsNone(process.poll(),'Catalogue watcher failed to start')
         snap=CB.snapshot(self.project);snap['products']['mounts']['title']['ka']='ახალი სახელი';CB.save(self.project,snap)
         output=self.root/'products.html';built=output.stat().st_mtime_ns
         time.sleep(1)
+        self.assertIsNone(process.poll(),'Catalogue watcher exited unexpectedly')
         self.assertEqual(output.stat().st_mtime_ns,built)
 
 if __name__=='__main__':unittest.main()

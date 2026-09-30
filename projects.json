@@ -1,14 +1,14 @@
 {
   "projects": {
     "Linko": {
-      "path": "/home/mint1/projects/Linko",
+      "path": "../Linko",
       "remote": "origin",
       "preview": "xsecret.html",
       "capturePages": ["products.html", "settlements.html"],
       "catalogue": true
     },
     "Dev Panel": {
-      "path": "/home/mint1/projects/dev-panel",
+      "path": ".",
       "remote": "origin"
     }
   }

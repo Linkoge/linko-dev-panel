@@ -1,6 +1,7 @@
 """Safe integration checks against disposable Git repositories."""
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,16 +78,27 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(404, self.request("GET", "/site/Two/preview/index.html")[0])
         self.assertEqual(403, self.request("GET", "/site/One/preview/.git/config")[0])
         self.assertEqual(403, self.request("GET", "/site/One/preview/%2e%2e/secret.html")[0])
-        (self.repo / ".secret.html").write_text("secret")
-        (self.repo / "public.html").symlink_to(".secret.html")
-        self.assertEqual(403, self.request("GET", "/site/One/preview/public.html")[0])
-        (self.repo / "public.html").unlink()
-        (self.repo / ".secret.html").unlink()
         config = Path(self.temp.name) / "config.json"
         config.write_text(json.dumps({"projects": {"bad": {"path": str(self.repo / 'subdir')}}}))
         (self.repo / "subdir").mkdir()
         with self.assertRaises(ValueError):
             load_projects(config)
+
+    def test_preview_rejects_symlink_to_hidden_file(self):
+        (self.repo / ".secret.html").write_text("secret")
+        try:
+            (self.repo / "public.html").symlink_to(".secret.html")
+        except OSError as exc:
+            if sys.platform != "win32" or getattr(exc, "winerror", None) != 1314:
+                raise
+            self.skipTest(f"Windows symlink permission is required: {exc}")
+        self.assertEqual(403, self.request("GET", "/site/One/preview/public.html")[0])
+
+    def test_preview_rejects_windows_drives_streams_and_separators(self):
+        for path in ("C:/secret.html", "C:secret.html", "index.html:stream.html", "assets%5csecret.html", "%5c%5cserver/share.html"):
+            with self.subTest(path=path):
+                self.assertEqual(403, self.request("GET", "/site/One/preview/" + path)[0])
+                self.assertEqual(403, self.request("GET", f"/versions/One/{self.initial}/preview/" + path)[0])
 
     def test_screenshot_routes_use_configured_project_and_existing_security(self):
         status, projects = self.request("GET", "/api/projects")

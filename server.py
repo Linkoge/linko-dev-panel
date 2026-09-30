@@ -6,23 +6,28 @@ import json
 import mimetypes
 import os
 import secrets
+import sys
 import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
 
-from repository import GitError, Project, load_projects, snapshot
+from repository import GitError, Project, configuration_path, load_projects, preview_url, snapshot, web_path
 import screenshots
-import catalogue_backend
+try:
+    import catalogue_backend
+except ModuleNotFoundError as exc:
+    if exc.name == "PIL" and __name__ == "__main__":
+        raise SystemExit("Pillow is missing. Install dependencies with: python -m pip install -r requirements.txt") from None
+    raise
 
 PANEL_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = PANEL_DIR / "projects.json"
-PROJECTS = load_projects(CONFIG_PATH)
+PROJECTS: dict[str, Project] = {}
 VERSION = "1.3.0"
 HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
-PORT = int(os.environ.get("LINKO_PANEL_PORT", "8765"))
+PORT = 8765
 MAX_BODY = 16_384
 TOKEN_TTL = 300
 PREVIEW_EXTENSIONS = {".html", ".css", ".js", ".json", ".svg", ".png", ".jpg", ".jpeg",
@@ -139,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.serve_file(PANEL_DIR / path.lstrip('/'), panel=True)
             elif path == "/api/projects":
                 self.send_json({"ok": True, "version": VERSION, "projects": [{"name": p.name, "previewUrl":
-                                f"/site/{quote(p.name, safe='')}/preview/{quote(p.preview, safe='/')}" if p.preview else None,
+                                preview_url(p.name, p.preview) if p.preview else None,
                                 "capturePages": list(screenshots.pages(p)), "catalogue": catalogue_backend.enabled(p)}
                                 for p in PROJECTS.values()],
                                 "csrfToken": CSRF_TOKEN})
@@ -185,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.preview_route(path)
             elif path.startswith("/preview") and "Linko" in PROJECTS and PROJECTS["Linko"].preview:
                 # Existing bookmarks retain their entry point.
-                self.redirect(f"/site/Linko/preview/{quote(PROJECTS['Linko'].preview, safe='/')}")
+                self.redirect(preview_url("Linko", PROJECTS["Linko"].preview))
             elif path.startswith("/history-preview/") and "Linko" in PROJECTS and PROJECTS["Linko"].preview:
                 parts = path.removeprefix("/history-preview/").split("/", 1)
                 if len(parts) != 2:
@@ -373,8 +378,9 @@ class Handler(BaseHTTPRequestHandler):
         if relative_parts[0] == "preview":
             relative_parts = relative_parts[1:]
         decoded = unquote("/".join(relative_parts))
-        relative = PurePosixPath(decoded)
-        if not decoded or relative.is_absolute() or any(x in ("", ".", "..") or x.startswith(".") or "\\" in x for x in relative.parts):
+        try:
+            relative = web_path(decoded)
+        except ValueError:
             self.error("Invalid preview path.", HTTPStatus.FORBIDDEN)
             return
         if relative.suffix.lower() not in PREVIEW_EXTENSIONS:
@@ -434,17 +440,32 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def main() -> None:
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+def main() -> int:
+    global PROJECTS, PORT
+    try:
+        try:
+            PORT = int(os.environ.get("LINKO_PANEL_PORT", "8765"))
+        except ValueError as exc:
+            raise ValueError("LINKO_PANEL_PORT must be a number between 1 and 65535.") from exc
+        if not 1 <= PORT <= 65535:
+            raise ValueError("LINKO_PANEL_PORT must be between 1 and 65535.")
+        PROJECTS = load_projects(configuration_path(PANEL_DIR))
+        server = ThreadingHTTPServer((HOST, PORT), Handler)
+    except (ValueError, OSError, OverflowError) as exc:
+        print(f"Unable to start Dev Panel: {exc}", file=sys.stderr)
+        return 1
     print(f"Dev Panel: http://{HOST}:{PORT}")
     print("Configured projects: " + ", ".join(PROJECTS))
+    for project in PROJECTS.values():
+        print(f"  {project.name}: {project.path}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopping Dev Panel.")
     finally:
         server.server_close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

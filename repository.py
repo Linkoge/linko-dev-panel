@@ -9,10 +9,37 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
+from urllib.parse import quote
 
 COMMIT_ID = re.compile(r"[0-9a-fA-F]{7,40}\Z")
 HISTORY_PAGE_SIZE = 20
+
+
+def web_path(value: str | PurePath) -> PurePosixPath:
+    """Validate a visible repository-relative browser path on either platform."""
+    raw = value.as_posix() if isinstance(value, PurePath) else value
+    if (not isinstance(raw, str) or not raw or raw.startswith("/")
+            or any(part in ("", ".", "..") or part.startswith(".")
+                   or any(char in part for char in "\\:")
+                   for part in raw.split("/"))):
+        raise ValueError("Expected a visible repository-relative web path using forward slashes.")
+    return PurePosixPath(raw)
+
+
+def preview_url(name: str, relative: str | PurePath, commit: str | None = None) -> str:
+    path = quote(web_path(relative).as_posix(), safe="/")
+    prefix = f"/versions/{quote(name, safe='')}/{commit}" if commit else f"/site/{quote(name, safe='')}"
+    return f"{prefix}/preview/{path}"
+
+
+def configuration_path(panel_dir: Path) -> Path:
+    """Keep machine settings out of the checked-in project allowlist."""
+    configured = os.environ.get("LINKO_PANEL_CONFIG")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local = panel_dir / "projects.local.json"
+    return local if local.exists() else panel_dir / "projects.json"
 
 
 class GitError(RuntimeError):
@@ -28,6 +55,7 @@ class Project:
     remote: str | None
     preview: str | None
     capture_pages: tuple[str, ...] = ()
+    catalogue: bool = False
 
     def run(self, *args: str, timeout: int = 30, check: bool = True) -> str:
         command = ["git", *args]
@@ -37,17 +65,27 @@ class Project:
             result = subprocess.run(command, cwd=self.path, env=env, text=True,
                                     encoding="utf-8", errors="surrogateescape",
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    timeout=timeout, check=False)
+                                    timeout=timeout, check=False, shell=False)
         except subprocess.TimeoutExpired as exc:
             raise GitError(command, 124, f"Git timed out after {timeout} seconds.") from exc
+        except FileNotFoundError as exc:
+            raise GitError(command, 127, "Git could not start. Install Git and put git on PATH; check that the repository still exists.") from exc
+        except OSError as exc:
+            raise GitError(command, 126, f"Unable to run Git in {self.path}: {exc}") from exc
         if check and result.returncode:
             raise GitError(command, result.returncode, result.stdout.strip())
         return result.stdout
 
     def blob(self, commit: str, path: str) -> bytes:
-        result = subprocess.run(["git", "show", f"{commit}:{path}"], cwd=self.path,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=30, check=False)
+        command = ["git", "show", f"{commit}:{path}"]
+        try:
+            result = subprocess.run(command, cwd=self.path,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=30, check=False, shell=False)
+        except subprocess.TimeoutExpired as exc:
+            raise GitError(command, 124, "Git timed out after 30 seconds.") from exc
+        except OSError as exc:
+            raise GitError(command, 126, f"Unable to run Git in {self.path}: {exc}. Check Git on PATH.") from exc
         if result.returncode:
             raise FileNotFoundError(path)
         return result.stdout
@@ -259,27 +297,39 @@ def snapshot(*values: str) -> str:
 
 
 def load_projects(config_path: Path) -> dict[str, Project]:
-    data = json.loads(config_path.read_text(encoding="utf-8"))
-    entries = data.get("projects")
+    config_path = config_path.resolve()
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Unable to read project configuration {config_path}: {exc}") from exc
+    entries = data.get("projects") if isinstance(data, dict) else None
     if not isinstance(entries, dict) or not entries:
         raise ValueError("projects.json must contain a nonempty projects object.")
     projects = {}
     for name, value in entries.items():
         if not isinstance(name, str) or not name or not isinstance(value, dict):
             raise ValueError("Each project needs a name and settings object.")
-        raw_path = value.get("path")
-        if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
-            raise ValueError(f"{name}: path must be absolute.")
-        path = Path(raw_path).resolve(strict=True)
+        raw_path = os.environ.get("LINKO_REPO_PATH", value.get("path")) if name == "Linko" else value.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"{name}: set a repository path in {config_path} or LINKO_REPO_PATH for Linko.")
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = config_path.parent / path
+        try:
+            path = path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"{name}: repository directory does not exist or is inaccessible: {path}. Check {config_path} and LINKO_REPO_PATH.") from exc
+        if not path.is_dir():
+            raise ValueError(f"{name}: repository path is not a directory: {path}")
         remote = value.get("remote", "origin")
         preview = value.get("preview")
         if remote is not None and (not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", remote)):
             raise ValueError(f"{name}: invalid remote name.")
         def valid_page(page: object) -> bool:
-            return (isinstance(page, str) and bool(page) and not Path(page).is_absolute()
-                    and all(p not in (".", "..") and not p.startswith(".") and "\\" not in p
-                            for p in Path(page).parts)
-                    and Path(page).suffix.lower() == ".html")
+            try:
+                return isinstance(page, str) and web_path(page).suffix.lower() == ".html"
+            except ValueError:
+                return False
         if preview is not None and not valid_page(preview):
             raise ValueError(f"{name}: preview must be a visible relative HTML path.")
         extra_pages = value.get("capturePages", [])
@@ -292,8 +342,20 @@ def load_projects(config_path: Path) -> dict[str, Project]:
             candidate = (path / page).resolve()
             if not candidate.is_relative_to(path) or not candidate.is_file():
                 raise ValueError(f"{name}: capture page does not exist inside the project: {page}")
-        project = Project(name, path, remote, preview, pages)
-        top = project.run("rev-parse", "--show-toplevel").strip()
+        catalogue = value.get("catalogue", False)
+        if not isinstance(catalogue, bool):
+            raise ValueError(f"{name}: catalogue must be true or false.")
+        if catalogue:
+            for relative in ("catalogue.py", "data/catalog.json", "templates/products.html", "data/products"):
+                candidate = (path / relative).resolve()
+                exists = candidate.is_dir() if relative == "data/products" else candidate.is_file()
+                if not candidate.is_relative_to(path) or not exists:
+                    raise ValueError(f"{name}: expected a Linko catalogue repository; missing {relative} inside {path}.")
+        project = Project(name, path, remote, preview, pages, catalogue)
+        try:
+            top = project.run("rev-parse", "--show-toplevel").strip()
+        except GitError as exc:
+            raise ValueError(f"{name}: cannot identify {path} as a Git working tree: {exc.output}") from exc
         if Path(top).resolve() != path:
             raise ValueError(f"{name}: path must be a Git repository root.")
         projects[name] = project

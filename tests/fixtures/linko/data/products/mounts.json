@@ -1,0 +1,32 @@
+{
+  "id": "mounts",
+  "kind": "product",
+  "slug": "mounts",
+  "title": {
+    "ka": "სამაგრები"
+  },
+  "image": {
+    "path": "assets/product-images/mounts.svg",
+    "alt": {
+      "ka": ""
+    },
+    "presentation": "cover",
+    "width": 240,
+    "height": 240
+  },
+  "badge": null,
+  "price": {
+    "mode": "on-request",
+    "amount": null,
+    "currency": "GEL"
+  },
+  "visible": true,
+  "availability": "available",
+  "destination": {
+    "mode": "none"
+  },
+  "detailReady": false,
+  "description": [],
+  "gallery": [],
+  "specifications": []
+}

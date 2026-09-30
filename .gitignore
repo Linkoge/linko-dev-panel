@@ -19,6 +19,7 @@ htmlcov/
 .env
 .env.*
 .envrc
+projects.local.json
 .direnv/
 .netrc
 .npmrc
