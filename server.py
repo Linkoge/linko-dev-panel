@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import binascii
 import mimetypes
 import os
 import secrets
@@ -16,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from repository import GitError, Project, configuration_path, load_projects, preview_url, snapshot, web_path
 import screenshots
+import terminal_backend
 try:
     import catalogue_backend
 except ModuleNotFoundError as exc:
@@ -130,6 +133,44 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def terminal_access(self) -> bool:
+        if not terminal_backend.private_peer(self.client_address[0]):
+            self.error("Terminals are restricted to localhost and the private Tailscale network.", HTTPStatus.FORBIDDEN)
+            return False
+        origin = self.headers.get("Origin", "")
+        if origin != f"http://{self.headers.get('Host', '')}":
+            self.error("A same-origin browser request is required for terminals.", HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
+    def terminal_socket(self, query: dict) -> None:
+        if not self.terminal_access():
+            return
+        try:
+            if set(query) != {"project"} or len(query["project"]) != 1:
+                raise ValueError("Select one configured project.")
+            project = project_from(query["project"][0])
+            terminal_backend.dependencies()
+            terminal_backend.directory(project)
+            if (self.headers.get("Upgrade", "").lower() != "websocket"
+                    or "upgrade" not in {part.strip() for part in self.headers.get("Connection", "").lower().split(",")}
+                    or self.headers.get("Sec-WebSocket-Version") != "13"):
+                raise ValueError("A WebSocket connection is required.")
+            try:
+                key = base64.b64decode(self.headers.get("Sec-WebSocket-Key", ""), validate=True)
+            except (binascii.Error, ValueError):
+                raise ValueError("Invalid WebSocket key.") from None
+            if len(key) != 16:
+                raise ValueError("Invalid WebSocket key.")
+        except (ValueError, RuntimeError, OSError) as exc:
+            self.error(str(exc), HTTPStatus.BAD_REQUEST)
+            return
+        self.close_connection = True
+        try:
+            terminal_backend.handle(self.connection, dict(self.headers), project)
+        except RuntimeError as exc:
+            self.error(str(exc), HTTPStatus.SERVICE_UNAVAILABLE)
+
     def do_GET(self) -> None:
         if not self.allowed_host():
             self.error("Host is not allowed.", HTTPStatus.FORBIDDEN)
@@ -140,6 +181,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path in {"/", "/index.html", "/panel", "/panel/", "/dev-panel", "/dev-panel/"}:
                 self.serve_file(PANEL_DIR / "index.html", panel=True)
+            elif path == "/terminal":
+                project_from(query.get("project", [None])[0])
+                self.serve_file(PANEL_DIR / "terminal.html", panel=True)
+            elif path in {"/terminal.js", "/terminal.css"}:
+                self.serve_file(PANEL_DIR / path.lstrip('/'), panel=True)
+            elif path in {"/terminal-assets/xterm.js", "/terminal-assets/xterm.css", "/terminal-assets/addon-fit.js"}:
+                assets = {"xterm.js": "@xterm/xterm/lib/xterm.js", "xterm.css": "@xterm/xterm/css/xterm.css",
+                          "addon-fit.js": "@xterm/addon-fit/lib/addon-fit.js"}
+                self.serve_file(PANEL_DIR / "node_modules" / assets[path.rsplit('/', 1)[1]], panel=True)
+            elif path == "/api/terminal/ws":
+                self.terminal_socket(query)
             elif path in {'/catalogue-editor.js','/catalogue-editor.css'}:
                 self.serve_file(PANEL_DIR / path.lstrip('/'), panel=True)
             elif path == "/api/projects":
@@ -152,6 +204,8 @@ class Handler(BaseHTTPRequestHandler):
                 project = project_from(query.get("project", [None])[0])
                 if path == "/api/screenshots":
                     self.send_json({"ok": True, **screenshots.status(project, query.get("page", [None])[0])})
+                elif path == "/api/terminal/status":
+                    self.send_json({"ok": True, **terminal_backend.status(project)})
                 elif path == "/api/screenshots/image":
                     filename = query.get("file", [""])[0]
                     image = screenshots.image_path(project, filename, query.get("page", [None])[0])
@@ -216,7 +270,13 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             body = self.read_json(11_000_000 if path == '/api/catalogue/upload' else 2_000_000 if path == '/api/catalogue/save' else MAX_BODY)
             project = project_from(body.get("project"))
-            if path == "/api/commit/prepare":
+            if path == "/api/terminal/connect":
+                if not self.terminal_access():
+                    return
+                if set(body) != {"project"}:
+                    raise ValueError("Terminal connections accept only a configured project identity.")
+                self.send_json({"ok": True, "ticket": terminal_backend.issue_ticket(project)})
+            elif path == "/api/commit/prepare":
                 self.prepare_commit(project, body)
             elif path == "/api/commit/confirm":
                 self.confirm_commit(project, body)
@@ -424,7 +484,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.security_headers()
         if panel:
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            policy = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                      if name == "terminal.html" else "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", policy)
         self.end_headers()
         self.wfile.write(body)
 
@@ -463,6 +525,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nStopping Dev Panel.")
     finally:
+        terminal_backend.disconnect_all()
         server.server_close()
     return 0
 

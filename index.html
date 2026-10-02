@@ -99,6 +99,7 @@
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
   <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
   <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button><button id="productsTab" class="hidden">Products</button></nav>
+  <a class="button" id="openTerminal" target="_blank" rel="noopener">OPEN TERMINAL</a>
   <div id="repositoryView">
 
   <section class="card historical hidden" id="historical">
@@ -528,20 +529,22 @@
         capturePagesByProject[item.name] = item.capturePages || [];
         catalogueByProject[item.name] = Boolean(item.catalogue);
       }
-      const stored = localStorage.getItem('devPanelProject');
+      const params = new URL(location.href).searchParams;
+      const stored = params.get('project') || localStorage.getItem('devPanelProject');
       selectedProject = data.projects.some(p => p.name === stored) ? stored : data.projects[0].name;
       $('project').value = selectedProject;
       $('productsTab').classList.toggle('hidden', !catalogueByProject[selectedProject]);
       updatePreview();
       updateCapturePages();
       await refresh();
-      const preferred = localStorage.getItem('devPanelView');
+      const preferred = params.get('view') || localStorage.getItem('devPanelView');
       setView(preferred === 'products' && catalogueByProject[selectedProject] ? 'products' : preferred === 'screenshots' ? 'screenshots' : 'repository');
     } catch (error) { $('online').textContent = '● Offline'; notice(error.message, true); }
   }
 
   function updatePreview() {
     currentPreviewUrl = $('project').selectedOptions[0]?.dataset.previewUrl || null;
+    $('openTerminal').href = `/terminal?project=${encodeURIComponent(selectedProject)}`;
   }
 
   function setView(view) {

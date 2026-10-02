@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Project Terminal · Dev Panel</title>
+  <link rel="stylesheet" href="/terminal-assets/xterm.css">
+  <link rel="stylesheet" href="/terminal.css">
+  <script defer src="/terminal-assets/xterm.js"></script>
+  <script defer src="/terminal-assets/addon-fit.js"></script>
+  <script defer src="/terminal.js"></script>
+</head>
+<body>
+  <header>
+    <a id="back" href="/">Dev Panel</a>
+    <strong id="projectName"></strong>
+    <span id="connectionState" role="status">Connecting…</span>
+    <button id="reconnect" type="button">Reconnect</button>
+    <button id="selectAll" type="button">Select all</button>
+    <button id="copy" type="button">Copy selection</button>
+    <button id="paste" type="button">Paste text</button>
+  </header>
+  <div id="message" role="status"></div>
+  <div id="terminal" aria-label="Interactive project terminal"></div>
+  <footer aria-label="Terminal keys">
+    <button data-key="&#27;">Esc</button><button data-key="&#9;">Tab</button>
+    <button data-key="&#3;">Ctrl+C</button><button data-key="&#2;">Ctrl+B</button>
+    <button data-key="&#27;[A">↑</button><button data-key="&#27;[B">↓</button>
+    <button data-key="&#27;[D">←</button><button data-key="&#27;[C">→</button>
+    <button data-key="&#2;[">Scroll history</button><button data-key="&#27;[5~">PgUp</button><button data-key="&#27;[6~">PgDn</button>
+    <span id="inputState" role="status"></span>
+  </footer>
+  <dialog id="pasteDialog">
+    <form method="dialog">
+      <label for="pasteText">Paste text here using your browser or Android keyboard</label>
+      <textarea id="pasteText" rows="10" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      <p>Sending uses the application’s bracketed-paste mode when enabled. Otherwise newlines may execute shell commands.</p>
+      <button value="cancel">Cancel</button><button id="sendPaste" value="send">Send to terminal</button>
+    </form>
+  </dialog>
+</body>
+</html>

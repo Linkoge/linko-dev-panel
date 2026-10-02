@@ -29,3 +29,23 @@
 #catalogueImageResults img { display:block; width:100%; height:90px; object-fit:contain; }
 @media (min-width:800px) { main:has(#productsView:not(.hidden)) { width:min(100%,1120px); } #productsView .editor-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px; } }
 @media (max-width:360px) { #productsView .editor-grid { grid-template-columns:1fr; } }
+
+/* Dedicated detail view uses the existing in-memory catalogue and field controls. */
+#productsView .detail-editor { width:100%; min-width:0; padding:0 0 32px; }
+#productsView .detail-editor h2 { overflow-wrap:anywhere; }
+#productsView .detail-editor label { display:block; margin:14px 0 8px; }
+#productsView .detail-editor input, #productsView .detail-editor select,
+#productsView .detail-editor textarea { width:100%; min-width:0; font:inherit; padding:12px; }
+#productsView .detail-editor textarea { min-height:200px; resize:vertical; line-height:1.6; border:1px solid #65311f; border-radius:12px; background:#160905; color:var(--text); }
+#productsView .detail-editor-section { margin-top:28px; padding-top:12px; border-top:1px solid #4b3b35; }
+#productsView .detail-editor .structured-row { margin:16px 0; padding:16px; background:#15181d; border:1px solid #4b3b35; border-radius:12px; }
+#productsView .detail-editor .structured-row img { display:block; width:min(100%,240px); height:160px; object-fit:contain; margin-bottom:10px; }
+#productsView .detail-editor .editor-actions, #productsView .format-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+#productsView .detail-editor .editor-actions > *, #productsView .format-toolbar > * { width:auto; }
+#productsView .detail-editor-toolbar { position:sticky; top:0; z-index:5; padding:12px 0; background:#100805; }
+#productsView .editor-help { color:#b3bac4; line-height:1.6; }
+@media (max-width:799px) {
+  main:has(.detail-editor) { width:100%; padding-inline:12px; }
+  #productsView .detail-editor .structured-row { padding:10px; }
+  #productsView .detail-editor textarea { min-height:240px; font-size:16px; }
+}

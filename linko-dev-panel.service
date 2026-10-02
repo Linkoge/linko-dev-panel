@@ -12,6 +12,8 @@ Environment=LINKO_PANEL_HOST=127.0.0.1
 Environment=LINKO_PANEL_PORT=8765
 Restart=on-failure
 RestartSec=3
+# tmux owns persistent sessions, including across panel service restarts.
+KillMode=process
 
 [Install]
 WantedBy=default.target
