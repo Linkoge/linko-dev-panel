@@ -89,7 +89,7 @@ sudo apt-get install -y python3 python3-venv git tmux nodejs npm curl
 
 Verify that the installed Node version is at least 20. If the distribution provides an older version, install a supported Node LTS release from [Node.js](https://nodejs.org/en/download). For an installation without root access, its official Linux archive can be extracted under `~/.local/share/dev-panel/`; verify it against the release's `SHASUMS256.txt`, choose the host's architecture, and add the extracted `bin` directory to `PATH` before running npm. Reuse an existing suitable installation rather than installing a second copy. A user-installed Node also needs an explicit path in the service settings below.
 
-Use the existing panel checkout. For a new installation, the standard layout is `~/projects/linko-dev-panel`; clone `https://github.com/Linkoge/linko-dev-panel.git` there if it is absent. From the actual panel directory, install into a virtual environment:
+Use the existing panel checkout. For a new installation, the standard layout is `~/projects/linko-dev-panel`; clone `git@github.com:Linkoge/linko-dev-panel.git` there if the owner's existing SSH setup has access. HTTPS cloning from `https://github.com/Linkoge/linko-dev-panel.git` also works, but pushing needs a noninteractive credential helper. A successful public clone does not verify push authentication. Preserve working remotes in existing checkouts. From the actual panel directory, install into a virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -125,6 +125,41 @@ Alternatively, copy `projects.json` to Git-ignored `projects.local.json` if a lo
 The projects directory defaults to the panel checkout's parent, normally `~/projects`. Verify it is the intended directory for discovery and cloning; set `LINKO_PROJECTS_DIR` or the local configuration's `projectsDirectory` to override it. It must exist and be writable for cloning. Preserve explicit settings for repositories needing previews or catalogue features; discovered repositories have Git and terminal controls without those extra settings. See [Add Project and discovery](#add-project-and-discovery-phase-2) for details.
 
 To use commit and restore, ensure `user.name` and `user.email` are configured in Git. Reuse the owner's existing identity; do not invent one. Push/pull additionally need working remote authentication, configured through the owner's normal Git credentials or SSH setup. The panel disables interactive Git credential prompts.
+
+#### Git authentication checks
+
+Check every repository whose push support you are setting up, including **Dev Panel** itself. Repositories can use different authentication: a working Linko push does not verify Dev Panel's push. Inspect both fetch and push URLs, the configured credential helper and any SSH agent. Run checks as the account running the panel, with the actual service's environment (including `HOME`, `PATH` and `SSH_AUTH_SOCK` when used). A login shell or coding agent can have credentials the systemd service cannot access. Inspect configuration and availability without printing tokens, private keys or the full process environment.
+
+From the intended repository, substitute its configured remote if it is not `origin`:
+
+```bash
+git remote get-url origin
+git remote get-url --push --all origin
+panel_git_branch=$(git branch --show-current)
+if [ -n "$panel_git_branch" ]; then
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes -oStrictHostKeyChecking=yes' \
+    git push --dry-run origin "HEAD:refs/heads/$panel_git_branch"
+fi
+```
+
+These commands assume ordinary SSH configuration; preserve any existing custom `GIT_SSH_COMMAND` and add the batch/host-key options to it instead of replacing it. A detached checkout cannot use the panel's push control; return to its current branch before checking. A dry run checks authentication and the proposed update without publishing commits. It does not guarantee that a later push will pass all server-side checks. Reading or cloning a public HTTPS repository does not test write access.
+
+If push reports `fatal: could not read Username for 'https://github.com': terminal prompts disabled`, HTTPS credentials are unavailable to that Git process. The commit can still have succeeded locally. Keep prompts disabled and reuse the owner's credential helper or existing SSH setup. When switching to SSH, first verify a push dry run to the **same owner/repository**, then update the affected remote and repeat the configured-remote check. For this panel's repository, when it has no separate push URL:
+
+```bash
+panel_git_branch=$(git branch --show-current)
+if [ -n "$panel_git_branch" ] && \
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes -oStrictHostKeyChecking=yes' \
+    git push --dry-run git@github.com:Linkoge/linko-dev-panel.git "HEAD:refs/heads/$panel_git_branch"; then
+  git remote set-url origin git@github.com:Linkoge/linko-dev-panel.git
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes -oStrictHostKeyChecking=yes' \
+    git push --dry-run origin "HEAD:refs/heads/$panel_git_branch"
+fi
+```
+
+Preserve separate push URLs and other remotes; changing the fetch URL alone does not replace an explicit push URL. Never put tokens in remote URLs or service files. Git remote changes take effect on the next operation without restarting the panel. Do not publish pending commits merely to test setup.
+
+**Verify publication separately.** History in the panel lists local commits. Ahead/behind counts use local remote-tracking refs and can be stale. After an explicitly requested real push, compare `git rev-parse HEAD` with `git ls-remote <push-url> refs/heads/<current-branch>` using the actual push destination. Matching hashes confirm that branch points to the local commit; a failed push must be reported as failed, with any local commits still pending.
 
 Validate the configuration without starting a server:
 

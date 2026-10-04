@@ -23,3 +23,30 @@ commands alone does not complete an installation request.
   and disclose any unavailable feature or unverified phone connectivity.
 
 Keep the runbook and service template consistent when changing setup requirements.
+
+## Git authentication and push verification
+
+- Preserve each repository's working remote and authentication, including the
+  panel's own checkout. A successful public HTTPS clone or `ls-remote` does not
+  establish permission to push. Do not replace working SSH authentication with
+  HTTPS unless a noninteractive credential helper is verified for the server user.
+- Before declaring push support ready, verify the configured push URL and run
+  `git push --dry-run <configured-remote> HEAD:refs/heads/<current-branch>` with
+  `GIT_TERMINAL_PROMPT=0`, as the panel's user and with its service environment.
+  Check the actual service's HOME, PATH and SSH agent/helper availability;
+  authentication in an interactive agent shell alone is insufficient. For SSH,
+  use batch mode and strict host-key checking. Never print credentials or embed
+  tokens in remote URLs, documentation or service files.
+- If HTTPS reports `could not read Username` / `terminal prompts disabled`,
+  inspect the credential setup. Reuse the owner's existing working SSH setup
+  when available, verify access to the exact repository with a push dry run,
+  then update only that repository's remote to the same owner/repository over
+  SSH. Preserve explicit push URLs and other remotes; verify the configured
+  remote again after the change. See [the README procedure](README.md#git-authentication-checks).
+- Commit and push are separate operations. Local history proves a commit exists
+  locally; local ahead/behind counts may be stale. After an authorized real push,
+  compare `git rev-parse HEAD` with the intended branch returned by
+  `git ls-remote <verified-push-url> refs/heads/<current-branch>` at the actual
+  push destination. Report pending local commits and authentication failures
+  accurately. Setup and diagnosis use dry runs; publishing requires the user's
+  instruction to push.
