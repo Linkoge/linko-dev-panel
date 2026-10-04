@@ -358,6 +358,8 @@ Manual Windows check: add an image under Linko's `assets/product-images/` in Exp
 
 Select a configured or discovered repository and click **OPEN TERMINAL**. It opens a dedicated, full-window workspace in a new tab. It starts the user's normal Linux shell in that project's directory, or returns to whatever application is already running in its tmux session. Run `bash`, `python`, `git`, `htop`, a development agent, or another ordinary terminal application yourself. No agent is automatically launched, and no application-specific session model is used.
 
+Terminal sessions use short numeric names starting at `23`. A new project gets the first available number (`24`, `25`, and so on if earlier numbers are taken). Reopening a project's terminal reconnects to its existing session, including after a panel restart. Older hash-named project sessions are renamed in place on connection, preserving their running applications.
+
 The architecture is **xterm.js → same-port WebSocket → real Linux PTY → tmux → shell/application**. `terminal_backend.py` attaches a temporary tmux client for each browser connection. Session creation uses process argument arrays, never a shell command assembled from browser input. The browser submits only a known project identity; the server project registry resolves and revalidates its canonical Git root. Phase 2 adds onboarding to this registry without changing the terminal implementation. Image/file clipboard uploads remain outside these phases.
 
 ### Dependencies and startup

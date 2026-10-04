@@ -2,9 +2,14 @@
 from io import BytesIO
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import uuid
 
 import server
 import terminal_backend as terminal
@@ -74,11 +79,12 @@ class TerminalSecurityTests(unittest.TestCase):
                     issue.assert_not_called()
 
     def test_session_identity_and_shell_free_argument_arrays(self):
-        name = terminal.session_name(self.project)
-        self.assertRegex(name, r"^project-[a-f0-9]{32}$")
-        self.assertEqual(name, terminal.session_name(self.project))
-        self.assertNotEqual(name, terminal.session_name(Project(self.project.name, Path("/another"), None, None)))
-        with patch.object(terminal, "dependencies", return_value=("/usr/bin/tmux",)), patch.object(terminal, "directory", return_value=self.project.path):
+        identity = terminal.project_identity(self.project)
+        self.assertNotEqual(identity, terminal.project_identity(Project(self.project.name, Path("/another"), None, None)))
+        with patch.object(terminal, "dependencies", return_value=("/usr/bin/tmux",)), patch.object(terminal, "directory", return_value=self.project.path), patch.object(terminal, "session_names", return_value={}):
+            name = terminal.session_name(self.project)
+            self.assertEqual(name, "23")
+            self.assertEqual(name, terminal.session_name(self.project))
             args = terminal.tmux_args(self.project)
         self.assertEqual(args[-1], str(self.project.path))
         self.assertIn(name, args)
@@ -106,6 +112,71 @@ class TerminalSecurityTests(unittest.TestCase):
         self.assertEqual((24, 80), terminal.dimensions({"rows": 24, "cols": 80}))
         for rows, cols in ((True, 80), (24, "80"), (0, 80), (24, 1001), (501, 80)):
             with self.assertRaises(ValueError): terminal.dimensions({"rows": rows, "cols": cols})
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("tmux"), "Linux tmux required")
+class TerminalSessionTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.project = Project("First", self.root, None, None)
+        self.other = Project("Other", self.root, None, None)
+        socket_patch = patch.object(terminal, "SOCKET_NAME", "panel-naming-test-" + uuid.uuid4().hex)
+        socket_patch.start()
+        self.addCleanup(socket_patch.stop)
+        self.addCleanup(lambda: self.tmux("kill-server"))
+        for mock in (patch.object(terminal, "dependencies", return_value=(shutil.which("tmux"),)),
+                     patch.object(terminal, "directory", side_effect=lambda project: project.path)):
+            mock.start()
+            self.addCleanup(mock.stop)
+
+    def tmux(self, *args):
+        return subprocess.run([shutil.which("tmux"), "-L", terminal.SOCKET_NAME, "-f", "/dev/null", *args],
+                              text=True, capture_output=True, timeout=10, check=False)
+
+    def pane_pid(self, name):
+        result = self.tmux("display-message", "-p", "-t", "=" + name, "#{pane_pid}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_numbering_and_project_reconnection(self):
+        self.assertEqual(terminal.session_name(self.project), "23")
+        self.assertEqual(terminal.prepare_session(self.project)[-1], "=23")
+        pid = self.pane_pid("23")
+        self.assertEqual(terminal.prepare_session(self.other)[-1], "=24")
+        self.assertEqual(terminal.prepare_session(self.project)[-1], "=23")
+        self.assertEqual(self.pane_pid("23"), pid)
+        self.assertEqual(terminal.status(self.other)["session"], "24")
+        self.assertTrue(terminal.status(self.project)["running"])
+        self.assertEqual(len(terminal.session_names(shutil.which("tmux"))), 2)
+
+    def test_skips_unrelated_sessions_and_fills_available_number(self):
+        for name in ("23", "24", "26"):
+            self.assertEqual(self.tmux("new-session", "-d", "-s", name).returncode, 0)
+        pid = self.pane_pid("23")
+        self.assertEqual(terminal.prepare_session(self.project)[-1], "=25")
+        self.assertEqual(self.pane_pid("23"), pid)
+        self.assertEqual(terminal.session_names(shutil.which("tmux"))["23"], "")
+
+    def test_legacy_rename_preserves_pane_and_pending_ticket(self):
+        legacy = terminal.project_identity(self.project)
+        self.assertEqual(self.tmux("new-session", "-d", "-s", legacy).returncode, 0)
+        self.assertEqual(self.tmux("new-session", "-d", "-s", "23").returncode, 0)
+        pid = self.pane_pid(legacy)
+        ticket = terminal.issue_ticket(self.project)
+        self.assertEqual(terminal.prepare_session(self.project)[-1], "=24")
+        self.assertEqual(self.pane_pid("24"), pid)
+        self.assertNotIn(legacy, terminal.session_names(shutil.which("tmux")))
+        terminal.take_ticket(self.project, ticket)
+        self.assertEqual(terminal.prepare_session(self.project)[-1], "=24")
+
+    def test_simultaneous_projects_get_distinct_sessions(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            names = list(pool.map(lambda project: terminal.prepare_session(project)[-1],
+                                  (self.project, self.other)))
+        self.assertEqual(set(names), {"=23", "=24"})
+        self.assertNotEqual(terminal.session_name(self.project), terminal.session_name(self.other))
 
 
 if __name__ == "__main__":

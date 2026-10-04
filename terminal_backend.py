@@ -23,7 +23,7 @@ OUTPUT_CHUNK = 16384
 MAX_CONNECTIONS = 16
 _slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
 _lock = threading.Lock()
-_session_lock = threading.Lock()
+_session_lock = threading.RLock()
 _tickets: dict[str, tuple[str, float]] = {}
 _connections: set[socket.socket] = set()
 
@@ -62,9 +62,34 @@ def directory(project: Project):
     return path
 
 
-def session_name(project: Project) -> str:
+def project_identity(project: Project) -> str:
     identity = json.dumps([project.name, str(project.path)], ensure_ascii=True).encode()
     return "project-" + hashlib.sha256(identity).hexdigest()[:32]
+
+
+def session_names(tmux: str) -> dict[str, str]:
+    result = subprocess.run([tmux, "-L", SOCKET_NAME, "list-sessions", "-F",
+                             "#{session_name}\t#{@linko_project}"],
+                            capture_output=True, text=True, timeout=5, check=False, shell=False)
+    return dict(line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line)
+
+
+def next_session_name(names: dict[str, str]) -> str:
+    number = 23
+    while str(number) in names:
+        number += 1
+    return str(number)
+
+
+def session_name(project: Project) -> str:
+    tmux, *_ = dependencies()
+    with _session_lock:
+        names = session_names(tmux)
+        identity = project_identity(project)
+        for name, owner in names.items():
+            if owner == identity or name == identity:
+                return name
+        return next_session_name(names)
 
 
 def tmux_args(project: Project) -> list[str]:
@@ -76,22 +101,30 @@ def tmux_args(project: Project) -> list[str]:
 
 
 def prepare_session(project: Project) -> list[str]:
-    args = tmux_args(project)
-    base, name = args[:5], session_name(project)
-    def run(*command):
-        return subprocess.run([*base, *command], capture_output=True, text=True,
-                              timeout=10, check=False, shell=False)
     with _session_lock:
+        args = tmux_args(project)
+        base, name = args[:5], args[-3]
+        identity = project_identity(project)
+        def run(*command):
+            return subprocess.run([*base, *command], capture_output=True, text=True,
+                                  timeout=10, check=False, shell=False)
+        # Rename legacy sessions in place, retaining their panes and applications.
+        if name == identity:
+            new_name = next_session_name(session_names(base[0]))
+            if run("rename-session", "-t", "=" + name, new_name).returncode:
+                raise RuntimeError("Unable to rename the project tmux session.")
+            name = new_name
         if run("has-session", "-t", "=" + name).returncode:
             created = run("new-session", "-d", "-s", name, "-c", str(project.path))
-            if created.returncode and run("has-session", "-t", "=" + name).returncode:
+            if created.returncode:
                 raise RuntimeError("Unable to create the project tmux session.")
         # Enforce persistence and normal tmux wheel/copy-mode scrolling even
         # if this dedicated server was started with other options previously.
         for command in (("set-option", "-g", "exit-unattached", "off"),
-                        ("set-option", "-t", name, "destroy-unattached", "off"),
-                        ("set-option", "-t", name, "mouse", "on"),
-                        ("set-option", "-t", name, "history-limit", "10000")):
+                        ("set-option", "-t", name + ":", "@linko_project", identity),
+                        ("set-option", "-t", name + ":", "destroy-unattached", "off"),
+                        ("set-option", "-t", name + ":", "mouse", "on"),
+                        ("set-option", "-t", name + ":", "history-limit", "10000")):
             result = run(*command)
             if result.returncode:
                 raise RuntimeError("Unable to configure tmux: " + result.stderr.strip())
@@ -103,9 +136,10 @@ def status(project: Project) -> dict:
         tmux, *_ = dependencies()
     except RuntimeError as exc:
         return {"available": False, "running": False, "error": str(exc)}
-    result = subprocess.run([tmux, "-L", SOCKET_NAME, "has-session", "-t", "=" + session_name(project)],
+    name = session_name(project)
+    result = subprocess.run([tmux, "-L", SOCKET_NAME, "has-session", "-t", "=" + name],
                             capture_output=True, timeout=5, check=False, shell=False)
-    return {"available": True, "running": result.returncode == 0, "session": session_name(project)}
+    return {"available": True, "running": result.returncode == 0, "session": name}
 
 
 def issue_ticket(project: Project) -> str:
@@ -119,7 +153,7 @@ def issue_ticket(project: Project) -> str:
         if len(_tickets) >= 128:
             raise RuntimeError("Too many pending terminal connections. Try again shortly.")
         ticket = secrets.token_urlsafe(32)
-        _tickets[ticket] = (session_name(project), now + 30)
+        _tickets[ticket] = (project_identity(project), now + 30)
         return ticket
 
 
@@ -128,7 +162,7 @@ def take_ticket(project: Project, ticket: object):
         raise ValueError("Missing terminal connection ticket.")
     with _lock:
         item = _tickets.pop(ticket, None)
-    if not item or item[0] != session_name(project) or item[1] <= time.monotonic():
+    if not item or item[0] != project_identity(project) or item[1] <= time.monotonic():
         raise ValueError("Invalid or expired terminal connection ticket.")
 
 
