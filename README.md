@@ -1,27 +1,43 @@
 # Dev Panel
 
-**Version 1.5.0** · A phone-friendly web panel for managing a fixed list of local Git repositories and capturing website screenshots. It runs natively on Windows 10/11 and Linux. The HTTP server uses Python's standard library and your installed Git; image validation uses Pillow. Screenshot capture uses Playwright and Chrome or Chromium.
+**Version 1.5.0** · A phone-friendly web panel for onboarding and managing local Git repositories and capturing website screenshots. It runs natively on Windows 10/11 and Linux. The HTTP server uses Python's standard library and your installed Git; image validation uses Pillow. Screenshot capture uses Playwright and Chrome or Chromium.
 
 ## What it does
 
 - Shows the selected repository's branch, changed files, commit history, and local ahead/behind status.
+- Clones SSH/HTTPS repositories through **+ Add Project** and automatically discovers Git projects in the projects directory.
 - Reviews and commits all local changes, then lets you push separately. Pull uses `git pull --ff-only`.
 - Shows a tracked diff and lists untracked files. Discard restores only the listed **unstaged tracked** changes after confirmation; staged and untracked files stay.
 - Compares a historical commit with the current branch, including file-by-file diffs. You can restore a historical tree by creating a new commit, or check out a commit temporarily in detached HEAD mode and return to a branch.
 - Opens a live or committed website preview when a project has a configured HTML entry file. Projects without one still have all Git controls.
 - Captures Mobile (390 × 844), Desktop (1440 × 900), or Both as overlapping viewport PNGs after scrolling the page in a real browser. The Screenshots view previews and downloads the images.
 
-Actions apply only to repositories in the configured project allowlist. The panel reads and writes directly in those local checkouts, including files and images you add manually. GitHub remains the Git remote; the panel does not copy repositories or accept arbitrary paths from the browser.
+Actions apply to the server's registry of configured and discovered repositories. The panel reads and writes directly in those local checkouts, including files and images you add manually. GitHub and other Git providers work through standard Git URLs; the browser cannot choose arbitrary local paths.
 
 ## Linko Products editor
 
 The Linko project has `"catalogue": true` in its project settings, which enables the private **Products** tab for that project only. It edits the catalogue that supplies product, service, and package cards, one-level categories, and optional generated detail pages. You can change titles, prices, availability, visibility, links, descriptions, specifications, galleries, and images; add or duplicate hidden drafts; and reorder cards or category entries. Hidden items can be included while editing. Removing a product from a category removes only its membership, not the product itself.
 
-Each card's **Edit product page** button opens a full-width view of the existing page fields. It shares all pending catalogue edits; **Back (keep edits)** retains them. Description sections have large textareas with Bold/List controls, followed by specifications, included items and gallery/alt controls. Select ka/en/ru to edit localized fields. **Preview saved page** opens the last successfully saved generated page. The toolbar stays visible while scrolling. Saving includes pending card edits too. The existing navigation/reload warnings protect unsaved changes.
+Each card's **Edit product page** button opens a full-width view of the existing page fields. It shares all pending catalogue edits; **Back (keep edits)** retains them. Description sections have large textareas with Bold/List controls, followed by specifications, included items and ordered product-image controls. Select ka/en/ru to edit localized fields. **Preview saved page** opens the last successfully saved generated page. The toolbar stays visible while scrolling. Saving includes pending card edits too. The existing navigation/reload warnings protect unsaved changes.
 
-Direct editor links use `/?project=Linko&view=products&product=<product-id>`; for example `/?project=Linko&view=products&product=starlink-installation`. The detail template and optional localized `priceNote` field are supplied by the updated Linko generator. Older gallery path strings remain supported alongside image objects with localized alt text.
+Direct editor links use `/?project=Linko&view=products&product=<product-id>`; for example `/?project=Linko&view=products&product=starlink-installation`. The detail template and optional localized `priceNote` field are supplied by the updated Linko generator. Legacy image objects and gallery path strings remain readable without reopening or resaving products.
 
 **Save & Generate** validates the complete catalogue, writes its JSON source files, and regenerates the static HTML pages. A stale editor tab is rejected and must be reloaded. **Preview HTML** opens the local generated page. Saving does not commit, push, or deploy. Use the Repository tab to review and commit, then explicitly push; commit preparation and push check that generated catalogue HTML is current. Other configured projects keep their existing behavior.
+
+Product images use one ordered `images` array of objects, for example:
+
+```json
+"images": [
+  {"path": "assets/product-images/front.jpg", "alt": {"ka": "Front"}, "width": 800, "height": 600, "presentation": "cover"},
+  {"path": "assets/product-images/side.jpg", "alt": {"ka": "Side"}, "width": 600, "height": 800}
+]
+```
+
+`images[0]` is the primary/cover image used by catalogue cards. **Manage images** on a card opens the existing product-page editor. **Product images** shows numbered thumbnails and marks the primary cover. **+ Add image** opens the existing picker/upload dialog and appends an image. **Choose image** replaces that individual entry while keeping its alt text. Reorder with desktop drag/drop, **Move left/right**, or **Make primary**; the explicit buttons work on touch screens. Save & Generate persists the order. At least one image is required. **Remove image** removes only the product reference: asset files are never deleted by this control, including shared assets and unused uploads.
+
+Legacy products retain `image`, optional `image.secondary`, and `gallery` until their images are edited. A shared accessor reads them in that order; an image edit converts that product to `images`, preserving the original cover, all references, localized alt text and image metadata, and removes the old fields. Editing unrelated product fields does not migrate images. Legacy paired-card presentation stays intact until image editing; canonical arrays show one cover on cards. The compatibility loader projects arrays in memory for older checkout generators without writing duplicate fields. Update the Linko generator for the current public gallery behavior.
+
+Generated detail pages and saved-page previews use the same existing gallery. A single image has no thumbnail strip. Multiple images have selectable thumbnails with a visible selected state and fit within a stable desktop/mobile image area without stretching or cropping. Broken gallery images are disabled; remaining images still work. If all images fail at runtime, a stable localized placeholder remains. New-array secondary paths may be missing while still subject to path/asset checks; the cover must exist at save/build time. Older generators retain their existing stricter file validation and detail layout.
 
 The image picker can search approved project images and upload new images (up to 8 MB) to the Linko project's `assets/product-images/` folder. Pillow is installed with `requirements.txt`. The panel uses its existing CSRF token, origin check, and configured project allowlist. It has no login; keep its port restricted to trusted devices. See the Linko repository's `docs/catalogue-editor.md` for editing, recovery, and publishing instructions.
 
@@ -72,6 +88,57 @@ Then run:
 Open <http://localhost:8765/>. By default, the server listens on localhost. It prints each resolved repository path at startup. A project path must exist and be a Git working-tree root; configured HTML pages must exist inside it. A catalogue project must contain `catalogue.py`, `data/catalog.json`, `data/products/`, and `templates/products.html`. Invalid configuration stops startup with a readable error.
 
 `remote` defaults to `origin`. Use `null` for a local-only repository; push, pull, and remote comparison will be unavailable. `preview` is optional and must be a relative path to an HTML file in the repository, using forward slashes. `capturePages` is an optional list of additional relative HTML pages available for screenshots; the `preview` page is always included. `capturePages` requires `preview`. Omit both for projects without a website. Restart after changing project settings or environment variables.
+
+## Add Project and discovery (Phase 2)
+
+The standard projects directory is the **parent of the installed Dev Panel directory**, normally `~/projects` when the panel is in `~/projects/dev-panel`. To override it, set `LINKO_PROJECTS_DIR` or add a top-level `"projectsDirectory"` to the selected settings file. The environment variable takes precedence. Relative paths resolve beside that settings file; `~` expands to the server user's home. The directory must already exist and be writable for cloning. For example:
+
+```json
+{
+  "projectsDirectory": "~/projects",
+  "projects": {}
+}
+```
+
+Configured entries still load first and keep their display names, paths, remote, preview, screenshot and catalogue settings. The panel then discovers immediate child directories containing a valid `.git` directory or Git worktree `.git` file, verified with `git rev-parse --show-toplevel`. Plain folders, fake `.git` folders, bare repositories, hidden directories, symlinked project directories and unfinished panel clones are excluded. Discovery does not recurse, fetch, pull, stage, reset, run generators or change repository files. Discovered projects use their directory name, `origin`, and no website/catalogue configuration. If a name conflicts with a different configured project, a deterministic ` (local)` suffix distinguishes it. Repositories already configured by path appear only once.
+
+Discovery runs at startup and whenever the browser requests the project list, including Add Project checks and clone completion. Repositories cloned by the panel become selectable automatically without a restart or configuration edit. To see a repository added outside the panel, reload the page. Installing this phase requires one panel restart to load the changed Python backend; subsequent clones require none. Settings-file and environment changes still require a restart. `"projects": {}` supports a fresh installation with no configured repositories; configured paths that are supplied must still be valid.
+
+1. Create a repository at your Git provider.
+2. In Dev Panel, click **+ Add Project** beside the repository selector and paste its URL.
+3. Check **Repository** (for example `Linkoge/example-project`) and **Local project** (`~/projects/example-project`).
+4. Click **Clone Project**. The dialog shows clone status and bounded Git output, and offers **Cancel clone**. Closing it leaves the job running; reopen Add Project to check it. A refresh in the same tab can recover job status while the panel process remains running.
+5. A successful clone refreshes the selector and selects the project when the dialog is open. If the dialog was closed, reopen it and choose **Open project**, or use the selector. Click **OPEN TERMINAL** to start working in that repository with the unchanged Phase 1 tmux/session architecture. An unsaved Products edit retains its existing confirmation before switching projects.
+
+Supported network forms include:
+
+- `git@github.com:Linkoge/example-project.git` (SSH SCP-style).
+- `https://github.com/Linkoge/example-project.git` (HTTPS).
+- `ssh://git@git.example.org:2222/team/example-project.git` (SSH with optional port).
+
+The `.git` suffix is optional, nested provider namespaces are supported, and no GitHub API is required. Repository path segments use ASCII letters, numbers, underscores, dots and hyphens, starting with a letter, number or underscore. Hostnames use DNS/IPv4 forms; IPv6 URL literals and unusual escaped/Unicode repository paths are outside this simple onboarding interface. Local/file URLs and Git external-helper URLs are rejected.
+
+Empty remotes clone normally without adding README, LICENSE or other starter files. They appear in the selector, show an empty history and open in the browser terminal. You can create files and make the first commit through the existing Git controls.
+
+If the destination already exists, cloning is blocked even when it is a plain folder, file or symlink. The panel never overwrites, deletes, resets or pulls that destination. When it is an available Git project, **Open existing project** selects it. Local names come from the repository's final path segment, so two providers/namespaces with the same repository name share a destination and the second clone is blocked.
+
+Authentication uses the **server user's existing Git credentials or SSH setup**. HTTPS URLs containing usernames/passwords/tokens, query strings or fragments are rejected; use a credential helper instead. SSH runs in batch mode with strict host-key verification, so a previously unknown host must first be trusted through your usual server setup. SSH keys and tokens are neither requested by the interface nor returned in its status. Authentication/access failures and network errors appear with useful explanations and redacted Git output. No interactive password prompt is opened by the panel.
+
+Clones use subprocess argument arrays with `shell=False`, a validated network URL after `--`, a fixed working directory and destination `.`. Project names reject traversal, separators, option prefixes, command substitution and shell characters. The server canonicalizes the projects root and destination and checks containment, then atomically creates a new private destination directory without adopting an existing one. Only one clone runs at a time, with a five-minute timeout. Output is bounded and repository URLs are redacted; request logs contain route/job IDs rather than the submitted URL. The existing Host, CSRF and origin checks protect onboarding requests.
+
+Git can leave partial files after a failed clone. On failure, cancellation, timeout or graceful panel shutdown, the panel removes the partial destination only when its canonical path and device/inode identity still match the directory that this clone exclusively created. A replaced directory or symlink is preserved, with an explanation; cleanup permission failures are reported. A cleaned failure can be retried immediately. A forced process kill, machine crash or power loss can leave a partial directory; inspect it manually before retrying because ownership records and jobs are kept in memory and are never inferred after restart. Completed repositories persist and are rediscovered normally.
+
+Phase 2 checks use disposable repositories and no remote repository writes:
+
+```bash
+python3 -m unittest discover -s tests -p test_onboarding.py -v
+PANEL_TEST_PYTHON=.venv/bin/python node tests/test_onboarding_browser.mjs
+PANEL_TEST_PYTHON=.venv/bin/python node tests/test_terminal_browser.mjs
+```
+
+The onboarding browser fixture passes real SSH/HTTPS-form URLs to Git with private `insteadOf` rewrites to local disposable remotes. It exercises the dialog, empty and populated clones, duplicate selection, missing-repository cleanup, discovery without restart, existing Git views, mobile layout and the new project's real tmux cwd/file creation. This verifies the workflow without requiring GitHub credentials; real provider authentication and network failures require your server/provider setup. Backend tests additionally cover authentication/network diagnostics, malformed URLs, traversal/shell characters, cancellation, timeout, ownership replacement and preservation of existing repositories.
+
+Phase 2 verification passed all 20 onboarding Python checks, the live onboarding browser suite (including an initially empty project list), the complete Phase 1 terminal browser suite and both existing JavaScript suites. The full Python suite passed 61 of 62 checks; the remaining pre-existing `test_detail_workflow` fixture still omits `sitemap.py` required by the sibling Linko generator. That unrelated fixture and the product-image system were left unchanged. Real provider credentials, physical Android behavior and native Windows onboarding were not exercised.
 
 ## Running on Windows
 
@@ -127,9 +194,9 @@ Manual Windows check: add an image under Linko's `assets/product-images/` in Exp
 
 ## Browser terminal (Phase 1)
 
-Select a configured repository and click **OPEN TERMINAL**. It opens a dedicated, full-window workspace in a new tab. It starts the user's normal Linux shell in that project's directory, or returns to whatever application is already running in its tmux session. Run `bash`, `python`, `git`, `htop`, a development agent, or another ordinary terminal application yourself. No agent is automatically launched, and no application-specific session model is used.
+Select a configured or discovered repository and click **OPEN TERMINAL**. It opens a dedicated, full-window workspace in a new tab. It starts the user's normal Linux shell in that project's directory, or returns to whatever application is already running in its tmux session. Run `bash`, `python`, `git`, `htop`, a development agent, or another ordinary terminal application yourself. No agent is automatically launched, and no application-specific session model is used.
 
-The architecture is **xterm.js → same-port WebSocket → real Linux PTY → tmux → shell/application**. `terminal_backend.py` attaches a temporary tmux client for each browser connection. Session creation uses process argument arrays, never a shell command assembled from browser input. The browser submits only a known project identity; the existing server project allowlist resolves and revalidates its canonical Git root. This phase adds no repository onboarding or image/file clipboard uploads.
+The architecture is **xterm.js → same-port WebSocket → real Linux PTY → tmux → shell/application**. `terminal_backend.py` attaches a temporary tmux client for each browser connection. Session creation uses process argument arrays, never a shell command assembled from browser input. The browser submits only a known project identity; the server project registry resolves and revalidates its canonical Git root. Phase 2 adds onboarding to this registry without changing the terminal implementation. Image/file clipboard uploads remain outside these phases.
 
 ### Dependencies and startup
 
@@ -202,13 +269,14 @@ The panel captures only HTML pages explicitly listed in the selected project set
 | --- | --- | --- |
 | `LINKO_REPO_PATH` | Linko's configured path | Override the `Linko` checkout location |
 | `LINKO_PANEL_CONFIG` | `projects.local.json` if present, otherwise `projects.json` | Project settings file; an explicit relative filename is resolved from the launch directory |
+| `LINKO_PROJECTS_DIR` | Parent of the installed panel directory | Directory scanned for Git projects and used for Add Project clones; overrides `projectsDirectory` |
 | `LINKO_PANEL_HOST` | `127.0.0.1` | Address to listen on |
 | `LINKO_PANEL_PORT` | `8765` | HTTP port |
 | `LINKO_PANEL_ALLOWED_HOSTS` | Empty | Extra comma-separated hostnames accepted in requests |
 | `LINKO_PANEL_NODE` | `node` on `PATH`, then an NVM installation | Node executable used for screenshots |
 | `LINKO_PANEL_CHROME` | Chrome/Chromium on `PATH` or standard Windows installation folders | Browser executable used for screenshots |
 
-Selection order is an explicit `LINKO_PANEL_CONFIG`, then local settings, then checked-in settings. `LINKO_REPO_PATH` overrides only the entry named `Linko`; other configured projects keep their own paths. Relative repository paths resolve beside the selected configuration file. Local settings replace the complete allowlist, so retain any projects you want available. Neither a `.env` file nor environment changes in another terminal are loaded automatically.
+Selection order is an explicit `LINKO_PANEL_CONFIG`, then local settings, then checked-in settings. `LINKO_REPO_PATH` overrides only the entry named `Linko`; other configured projects keep their own paths. Relative repository paths resolve beside the selected configuration file. Local settings replace the configured entries, so retain the settings for projects needing special metadata; automatic discovery adds eligible repositories from the projects directory. Neither a `.env` file nor environment changes in another terminal are loaded automatically.
 
 These `LINKO_PANEL_` names are retained for compatibility with the original installation. To reach the panel from another device, bind to an address that device can reach and restrict access with a firewall or a private network such as Tailscale. **There is no login or TLS. Anyone who can reach the port can use the Git controls.** Mutating requests require a CSRF token and an origin check, but these do not replace network access control.
 
@@ -231,14 +299,16 @@ Restoring a version requires a clean working tree and makes a **new commit** wit
 
 ## Development
 
-`server.py` handles HTTP and request checks; `repository.py` contains project configuration, portable preview URLs, and Git operations. `catalogue_backend.py` calls the selected checkout's generator through `catalogue_compat.py`. `index.html` is the interface, and `projects.json` is the default repository allowlist. `screenshots.py` manages capture jobs and saved sessions; `capture.mjs` and `scroll_plan.mjs` drive the browser. Run the Python integration and JavaScript scroll-plan tests with:
+`server.py` handles HTTP and request checks; `repository.py` contains project configuration, portable preview URLs, and Git operations. `catalogue_backend.py` calls the selected checkout's generator through `catalogue_compat.py`. `index.html` is the interface, and `projects.json` supplies default project metadata. `project_onboarding.py` handles projects-directory resolution, read-only discovery, URL validation and clone jobs; `project-onboarding.js` supplies the Add Project dialog flow. `screenshots.py` manages capture jobs and saved sessions; `capture.mjs` and `scroll_plan.mjs` drive the browser. Run the Python integration and JavaScript scroll-plan tests with:
 
 ```bash
 python3 -m unittest discover -s tests -v
 node tests/test_scroll_plan.mjs
 ```
 
-On Windows, use `python` instead of `python3`. Tests use disposable Git repositories and fixed catalogue fixtures; a sibling Linko checkout is not required. `test_cross_platform.py` covers Windows-style paths, URL encoding, shell-free Git execution with explicit working directories, configurable checkout selection, startup errors, Windows browser discovery, and catalogue locking. The native lock test exercises Windows locking when run on Windows, and Linux locking on Linux. Symlink-specific tests require Windows Developer Mode or equivalent permission; only those checks skip if that permission is unavailable.
+On Windows, use `python` instead of `python3`. Core tests use disposable Git repositories and fixed catalogue fixtures. Current detail/multiple-image integration tests require the sibling Linko checkout and skip when it is unavailable. `test_cross_platform.py` covers Windows-style paths, URL encoding, shell-free Git execution with explicit working directories, configurable checkout selection, startup errors, Windows browser discovery, and catalogue locking. The native lock test exercises Windows locking when run on Windows, and Linux locking on Linux. Symlink-specific tests require Windows Developer Mode or equivalent permission; only those checks skip if that permission is unavailable.
+
+Phase 3 browser verification: run `node tests/test_product_images_browser.mjs` with Chrome and the sibling Linko checkout available. It creates a disposable catalogue and local server, then checks desktop drag/drop and 360px touch controls, selection/upload, new single-image products, save/reload/order/cover, removal without asset deletion, catalogue output and saved previews, gallery switching, mixed aspect ratios, stable layout and unavailable images. Run `node tests/test_detail_editor.mjs` for editor-state checks. `PANEL_TEST_PYTHON` can select the Python executable and `PANEL_IMAGE_SOURCE` can select an isolated current Linko source checkout. Physical Android/iOS and native Windows were not tested in Phase 3. The known detail-workflow fixture issue was fixed by including `sitemap.py` and using deterministic, fully translated test content; all 69 panel Python tests now pass.
 
 The compatibility work was verified automatically on Linux with the Python and JavaScript suites, including HTTP handler integration tests. Windows paths and the Windows adapter are also exercised with portable representations/mocks on Linux. This verification environment denies listening sockets, so live server startup could not be tested here. Native Windows execution, Windows browser capture, and GitHub authentication/push from your PC require the manual Windows check above; Linux verification does not establish that those Windows runtime checks have run.
 

@@ -6,6 +6,54 @@
   const slug=value=>value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45);
   const unique=(base,used)=>{let value=base,n=2;while(used.includes(value))value=`${base}-${n++}`;return value};
   const imageUrl=path=>`/site/${encodeURIComponent(loadedProject)}/preview/${path.split('/').map(encodeURIComponent).join('/')}`;
+  // Legacy fields are read as one ordered list; migrate only on image edits.
+  function productImages(p) {
+    if(p.images)return p.images;
+    const {secondary,...main}=p.image;
+    return [main,...(secondary?[{...main,path:secondary}]:[]),...(p.gallery||[]).map(item=>({alt:{ka:''},width:240,height:240,...(typeof item==='string'?{path:item}:item)}))];
+  }
+  const primaryImage=p=>productImages(p)[0];
+  function editImages(p) {
+    if(!p.images){p.images=structuredClone(productImages(p));delete p.image;delete p.gallery;}
+    return p.images;
+  }
+  function replaceImage(p,n) {
+    return pick(null,null,(path,width,height)=>{
+      const image=editImages(p)[n];image.path=path;
+      if(width){image.width=width;image.height=height;}
+    });
+  }
+  function reorderImage(p,from,to) {
+    const count=productImages(p).length;
+    if(!Number.isInteger(from)||!Number.isInteger(to)||from===to||from<0||to<0||from>=count||to>=count)return;
+    const images=editImages(p);
+    images.splice(to,0,images.splice(from,1)[0]);mark();render();
+  }
+  function imagesEditor(p) {
+    const section=el('section','detail-editor-section');section.append(el('h3','','Product images'));
+    section.append(el('p','editor-help','First image is the primary cover. Drag to reorder, or use Move left/right. Removing an image keeps its asset file.'));
+    const grid=el('div','product-images-editor'),images=productImages(p);
+    images.forEach((image,n)=>{
+      const row=el('div','product-image-item');row.dataset.imageIndex=String(n);row.draggable=true;
+      row.ondragstart=e=>{e.dataTransfer.setData('application/x-product-image',String(n));e.dataTransfer.effectAllowed='move';};
+      row.ondragover=e=>{if([...e.dataTransfer.types].includes('application/x-product-image'))e.preventDefault();};
+      row.ondrop=e=>{e.preventDefault();const data=e.dataTransfer.getData('application/x-product-image');if(data!=='')reorderImage(p,Number(data),n);};
+      row.append(el('h4','',`${n+1}${n===0?' · Primary / cover':''}`));
+      const thumb=el('img');thumb.src=imageUrl(image.path);thumb.alt=image.alt?.[editLanguage]||image.alt?.ka||'';thumb.draggable=false;
+      const missing=el('span','image-unavailable','Image unavailable');missing.hidden=true;thumb.onerror=()=>{thumb.hidden=true;missing.hidden=false;};
+      row.append(thumb,missing,button('Choose image',()=>replaceImage(p,n)));
+      field(row,'Image alt text',image.alt?.[editLanguage]||'',v=>set((editImages(p)[n].alt ||= {ka:''}),editLanguage,v));
+      const actions=el('div','editor-actions');
+      for(const [caption,delta] of [['← Move left',-1],['Move right →',1]]) {
+        const b=button(caption,()=>reorderImage(p,n,n+delta));b.disabled=n+delta<0||n+delta>=images.length;actions.append(b);
+      }
+      if(n>0)actions.append(button('Make primary',()=>reorderImage(p,n,0)));
+      const remove=button('Remove image',()=>{editImages(p).splice(n,1);mark();render();});remove.disabled=images.length===1;remove.title=images.length===1?'Keep at least one product image':'';actions.append(remove);
+      row.append(actions);grid.append(row);
+    });
+    section.append(grid,button('+ Add image',()=>pick(null,null,(path,width,height)=>editImages(p).push({path,alt:{ka:''},presentation:'cover',width:width||240,height:height||240}))));
+    return section;
+  }
   const api=(path,options)=>window.catalogueApi(path,options);
   const mark=()=>{dirty=true; changes++; const node=$('catalogueStatus');if(node){node.textContent='Unsaved changes';node.className='editor-status'}};
   const status=(message,error=false)=>{const node=$('catalogueStatus');if(node){node.textContent=message;node.className=`editor-status${error?' error':''}`}};
@@ -24,7 +72,7 @@
     const p=state.products[ref.id],card=el('div','editor-item'+(p.visible?'':' is-hidden'));card.draggable=true;
     card.ondragstart=e=>{e.dataTransfer.setData('text/plain',String(index));e.dataTransfer.effectAllowed='move'};
     card.ondragover=e=>e.preventDefault();card.ondrop=e=>{e.preventDefault();const from=Number(e.dataTransfer.getData('text/plain'));if(Number.isInteger(from)&&from!==index)move(from,index-from)};
-    const picture=button('',()=>pick(p.image,'path'),'editor-image');picture.title='Choose or upload image';const img=el('img',p.image.presentation==='cutout'?'cutout':'');img.src=imageUrl(p.image.path);img.alt=p.image.alt.ka||'';picture.append(img);card.append(picture);
+    const picture=button('',()=>replaceImage(p,0),'editor-image');picture.title='Choose or upload primary image';const img=el('img',primaryImage(p).presentation==='cutout'?'cutout':'');img.src=imageUrl(primaryImage(p).path);img.alt=primaryImage(p).alt.ka||'';picture.append(img);card.append(picture);
     const titlePreview=el('div','editor-title',p.title.ka);card.append(titlePreview);
     const pricePreview=el('div','editor-price'+(p.price.mode==='on-request'?' request':''),previewPrice(p));card.append(pricePreview);
     field(card,'Title',p.title.ka,v=>{p.title.ka=v;titlePreview.textContent=v;mark()});
@@ -34,11 +82,11 @@
     card.append(label('Availability',choice(p.availability,[['available','Available'],['unavailable','Unavailable'],['preorder','Preorder']],v=>set(p,'availability',v))));
     card.append(label('Visibility',choice(String(p.visible),[['true','Visible'],['false','Hidden']],v=>{set(p,'visible',v==='true');card.classList.toggle('is-hidden',!p.visible)})));
     const actions=rowControls(card,ref,index);
-    actions.append(button('Duplicate',()=>duplicate(p)),button('Edit product page',()=>openProduct(p.id),'editor-wide'));
+    actions.append(button('Duplicate',()=>duplicate(p)),button('Edit product page',()=>openProduct(p.id),'editor-wide'),button('Manage images',()=>{openProduct(p.id);view.querySelector('.product-images-editor')?.scrollIntoView?.({block:'start'});},'editor-wide'));
     if(categoryId)actions.append(button('Remove from category',()=>{refs().splice(index,1);mark();render()},'editor-wide'));
     const details=el('details');details.append(el('summary','','Details & destination'));
     details.append(label('Kind',choice(p.kind,[['product','Product'],['service','Service'],['package','Package']],v=>set(p,'kind',v))));
-    field(details,'Image alt text',p.image.alt.ka,v=>set(p.image.alt,'ka',v));
+    field(details,'Image alt text',primaryImage(p).alt.ka,v=>set(editImages(p)[0].alt,'ka',v));
     details.append(label('Destination',choice(p.destination.mode,[['none','No link'],['existing','Existing link'],['generated','Generated detail page']],v=>{p.destination.mode=v;if(v==='generated')p.detailReady=false;mark();render()})));
     if(p.destination.mode==='existing')field(details,'Existing URL',p.destination.url||'',v=>set(p.destination,'url',v));
     if(p.destination.mode==='generated')details.append(label('Publish detail page',choice(String(p.detailReady),[['false','Keep as draft'],['true','Publish generated page']],v=>set(p,'detailReady',v==='true'))));
@@ -129,18 +177,7 @@
     structured(editor,'Description sections',p,'description',()=>({heading:{ka:''},body:{ka:''}}),[['Section title (optional)','heading'],['Description','body','textarea']]);
     structured(editor,'Specifications',p,'specifications',()=>({label:{ka:''},value:{ka:''}}),[['Label','label'],['Value','value']]);
     structured(editor,"What's included",p,'included',()=>({ka:''}),[['Item',null]]);
-    const gallery=el('section','detail-editor-section');gallery.append(el('h3','','Gallery'));
-    const main=el('div','structured-row');const image=el('img');image.src=imageUrl(p.image.path);image.alt='';main.append(el('h4','','Main image (also used on the catalogue card)'),image,button('Choose main image',()=>pick(p.image,'path')));localizedField(main,'Main image alt text',p.image,'alt');gallery.append(main);
-    if(p.image.secondary){const secondary=el('div','structured-row');const img=el('img');img.src=imageUrl(p.image.secondary);img.alt='';secondary.append(el('h4','','Secondary card image'),img,button('Choose secondary image',()=>pick(p.image,'secondary')));gallery.append(secondary)}
-    (p.gallery||[]).forEach((entry,n)=>{
-      const row=el('div','structured-row'),thumb=el('img');thumb.src=imageUrl(typeof entry==='string'?entry:entry.path);thumb.alt='';row.append(thumb);
-      row.append(button('Choose image',()=>pick(null,null,path=>{if(typeof entry==='string')p.gallery[n]={path,alt:{ka:''}};else entry.path=path})));
-      // Upgrade legacy path strings only when the user supplies alt text or a new image.
-      if(typeof entry==='string')field(row,'Image alt text','',v=>{const item=typeof p.gallery[n]==='string'?(p.gallery[n]={path:entry,alt:{ka:''}}):p.gallery[n];set(item.alt,editLanguage,v)});
-      else localizedField(row,'Image alt text',entry,'alt');
-      rowActions(row,p.gallery,n);gallery.append(row);
-    });
-    gallery.append(button('Add gallery image',()=>pick(null,null,path=>(p.gallery ||= []).push({path,alt:{ka:''}}))));editor.append(gallery);
+    editor.append(imagesEditor(p));
     const destination=el('section','detail-editor-section');destination.append(el('h3','','Page destination'));
     destination.append(label('Destination',choice(p.destination.mode,[['none','No link'],['existing','Existing link'],['generated','Generated detail page']],v=>{p.destination.mode=v;if(v==='generated')p.detailReady=false;mark();render()})));
     if(p.destination.mode==='existing')field(destination,'Existing URL',p.destination.url||'',v=>set(p.destination,'url',v));
@@ -157,7 +194,7 @@
     rowControls(card,ref,index);return card;
   }
   function duplicate(p){const id=unique(p.id+'-copy',Object.keys(state.products)),copy=structuredClone(p);copy.id=id;copy.slug=unique(p.slug+'-copy',Object.values(state.products).map(x=>x.slug));copy.visible=false;copy.destination={mode:'none'};copy.detailReady=false;state.products[id]=copy;refs().push({type:'product',id});mark();render()}
-  function addProduct(){const id=unique('draft-product',Object.keys(state.products));const p={id,kind:'product',slug:id,title:{ka:'ახალი პროდუქტი'},image:{path:'assets/product-images/mounts.svg',alt:{ka:''},presentation:'cover',width:240,height:240},badge:null,price:{mode:'on-request',amount:null,currency:'GEL'},visible:false,availability:'available',destination:{mode:'none'},detailReady:false,description:[],gallery:[],specifications:[]};state.products[id]=p;refs().push({type:'product',id});mark();render()}
+  function addProduct(){const id=unique('draft-product',Object.keys(state.products));const p={id,kind:'product',slug:id,title:{ka:'ახალი პროდუქტი'},images:[{path:'assets/product-images/mounts.svg',alt:{ka:''},presentation:'cover',width:240,height:240}],badge:null,price:{mode:'on-request',amount:null,currency:'GEL'},visible:false,availability:'available',destination:{mode:'none'},detailReady:false,description:[],specifications:[]};state.products[id]=p;refs().push({type:'product',id});mark();render()}
   function addCategory(){const id=unique('new-category',state.catalog.categories.map(c=>c.id));state.catalog.categories.push({id,slug:id,title:{ka:'ახალი კატეგორია'},image:'assets/product-images/mounts.svg',visible:false,priceMode:'view-options',entries:[]});state.catalog.root.push({type:'category',id});mark();render()}
   function addExisting(){const used=new Set(refs().filter(r=>r.type==='product').map(r=>r.id));const choices=Object.values(state.products).filter(p=>!used.has(p.id));if(!choices.length){status('Every product is already in this category.');return}const select=choice(choices[0].id,choices.map(p=>[p.id,p.title.ka]),()=>{});const dialog=$('modal');$('modalTitle').textContent='Add existing product';$('modalContent').replaceChildren(select);$('modalConfirm').textContent='ADD PRODUCT';$('modalConfirm').className='primary';dialog.oncancel=null;$('modalConfirm').onclick=()=>{refs().push({type:'product',id:select.value});dialog.close();mark();render()};$('modalCancel').onclick=()=>dialog.close();dialog.showModal()}
   function render(){if(!state)return;if(editingId){renderProduct();return;}view.replaceChildren();const toolbar=el('div','editor-toolbar');
@@ -186,7 +223,7 @@
   }
   async function pick(target,key,apply){imageTarget={target,key,apply};$('catalogueImageDialog').showModal();$('catalogueImageSearch').value='';await searchImages()}
   function applyImage(path,width,height){
-    if(imageTarget.apply)imageTarget.apply(path);
+    if(imageTarget.apply)imageTarget.apply(path,width,height);
     else {
       imageTarget.target[imageTarget.key]=path;
       if(imageTarget.key==='path'&&width){imageTarget.target.width=width;imageTarget.target.height=height}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private web UI for the explicitly configured Git projects."""
+"""Private web UI for configured and discovered Git projects."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,7 @@ import binascii
 import mimetypes
 import os
 import secrets
+import signal
 import sys
 import threading
 import time
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from repository import GitError, Project, configuration_path, load_projects, preview_url, snapshot, web_path
 import screenshots
 import terminal_backend
+from project_onboarding import CloneManager, ProjectRegistry, projects_directory
 try:
     import catalogue_backend
 except ModuleNotFoundError as exc:
@@ -28,6 +30,8 @@ except ModuleNotFoundError as exc:
 
 PANEL_DIR = Path(__file__).resolve().parent
 PROJECTS: dict[str, Project] = {}
+PROJECT_REGISTRY: ProjectRegistry | None = None
+CLONES: CloneManager | None = None
 VERSION = "1.5.0"
 HOST = os.environ.get("LINKO_PANEL_HOST", "127.0.0.1")
 PORT = 8765
@@ -43,10 +47,26 @@ CONFIRMATIONS_LOCK = threading.Lock()
 RETURN_BRANCHES: dict[str, str] = {}
 
 
+def refresh_projects() -> dict[str, Project]:
+    global PROJECTS
+    if PROJECT_REGISTRY is not None:
+        PROJECTS = CLONES.discover() if CLONES else PROJECT_REGISTRY.refresh()
+    return PROJECTS
+
+
+def initialize_projects(config: Path) -> None:
+    global PROJECT_REGISTRY, CLONES
+    configured = load_projects(config)
+    PROJECT_REGISTRY = ProjectRegistry(projects_directory(PANEL_DIR, config), configured)
+    CLONES = CloneManager(PROJECT_REGISTRY, refresh_projects)
+    refresh_projects()
+
+
 def project_from(value: object) -> Project:
-    if not isinstance(value, str) or value not in PROJECTS:
+    projects = PROJECTS  # A refresh replaces the snapshot; existing requests keep theirs.
+    if not isinstance(value, str) or value not in projects:
         raise ValueError("Unknown project. Select a configured repository.")
-    return PROJECTS[value]
+    return projects[value]
 
 
 def make_confirmation(kind: str, project: Project, state: str, **details: object) -> str:
@@ -194,12 +214,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.terminal_socket(query)
             elif path in {'/catalogue-editor.js','/catalogue-editor.css'}:
                 self.serve_file(PANEL_DIR / path.lstrip('/'), panel=True)
+            elif path == '/project-onboarding.js':
+                self.serve_file(PANEL_DIR / 'project-onboarding.js', panel=True)
             elif path == "/api/projects":
+                refresh_projects()
                 self.send_json({"ok": True, "version": VERSION, "projects": [{"name": p.name, "previewUrl":
                                 preview_url(p.name, p.preview) if p.preview else None,
                                 "capturePages": list(screenshots.pages(p)), "catalogue": catalogue_backend.enabled(p)}
                                 for p in PROJECTS.values()],
                                 "csrfToken": CSRF_TOKEN})
+            elif path == "/api/projects/clone-status":
+                if CLONES is None:
+                    raise ValueError("Project onboarding is unavailable.")
+                self.send_json({"ok": True, **CLONES.status(query.get("id", [None])[0])})
             elif path.startswith("/api/"):
                 project = project_from(query.get("project", [None])[0])
                 if path == "/api/screenshots":
@@ -269,6 +296,20 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlsplit(self.path).path
             body = self.read_json(11_000_000 if path == '/api/catalogue/upload' else 2_000_000 if path == '/api/catalogue/save' else MAX_BODY)
+            if path in {"/api/projects/preview", "/api/projects/clone", "/api/projects/cancel"}:
+                if CLONES is None or PROJECT_REGISTRY is None:
+                    raise ValueError("Project onboarding is unavailable.")
+                if path == "/api/projects/cancel":
+                    self.send_json({"ok": True, **CLONES.cancel(body.get("id"))})
+                else:
+                    preview = CLONES.preview(body.get("url"))
+                    if path == "/api/projects/preview":
+                        self.send_json({"ok": True, **preview})
+                    elif preview["exists"]:
+                        self.send_json({"ok": False, "error": "The local project already exists. No files were changed.", **preview}, HTTPStatus.CONFLICT)
+                    else:
+                        self.send_json({"ok": True, **CLONES.start(body.get("url"))}, HTTPStatus.ACCEPTED)
+                return
             project = project_from(body.get("project"))
             if path == "/api/terminal/connect":
                 if not self.terminal_access():
@@ -511,22 +552,29 @@ def main() -> int:
             raise ValueError("LINKO_PANEL_PORT must be a number between 1 and 65535.") from exc
         if not 1 <= PORT <= 65535:
             raise ValueError("LINKO_PANEL_PORT must be between 1 and 65535.")
-        PROJECTS = load_projects(configuration_path(PANEL_DIR))
+        initialize_projects(configuration_path(PANEL_DIR))
         server = ThreadingHTTPServer((HOST, PORT), Handler)
     except (ValueError, OSError, OverflowError) as exc:
         print(f"Unable to start Dev Panel: {exc}", file=sys.stderr)
         return 1
     print(f"Dev Panel: http://{HOST}:{PORT}")
-    print("Configured projects: " + ", ".join(PROJECTS))
+    print("Projects: " + ", ".join(PROJECTS))
+    print(f"Projects directory: {PROJECT_REGISTRY.root}")
     for project in PROJECTS.values():
         print(f"  {project.name}: {project.path}")
+    def stop_on_signal(*_):
+        raise KeyboardInterrupt
+    previous_term = signal.signal(signal.SIGTERM, stop_on_signal)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopping Dev Panel.")
     finally:
+        if CLONES:
+            CLONES.shutdown()
         terminal_backend.disconnect_all()
         server.server_close()
+        signal.signal(signal.SIGTERM, previous_term)
     return 0
 
 

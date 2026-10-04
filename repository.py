@@ -93,6 +93,9 @@ class Project:
     def head(self) -> str:
         return self.run("rev-parse", "HEAD").strip()
 
+    def has_head(self) -> bool:
+        return bool(self.run("rev-parse", "--verify", "--quiet", "HEAD", check=False).strip())
+
     def branch(self) -> str | None:
         return self.run("branch", "--show-current").strip() or None
 
@@ -143,7 +146,7 @@ class Project:
                     untracked.append(f"{item['path']}:{stat.st_mode}:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ino}")
                 except OSError:
                     untracked.append(f"{item['path']}:missing")
-        return snapshot(self.head(), self.branch() or "", raw,
+        return snapshot(self.head() if self.has_head() else "", self.branch() or "", raw,
                         self.run("diff", "--binary", "--no-ext-diff", "--"),
                         self.run("diff", "--cached", "--binary", "--no-ext-diff", "--"),
                         *untracked)
@@ -210,16 +213,19 @@ class Project:
         untracked = [str(x["path"]) for x in changes if x["untracked"]]
         branch = self.branch()
         upstream = self.upstream()
+        empty = not self.has_head()
         historical = None
-        if branch is None:
+        if branch is None and not empty:
             historical = {**self.commit_info(self.head()), "returnBranch": self.return_branch(remembered_branch)}
-        return {"project": self.name, "branch": branch or "(detached HEAD)", "head": self.head(),
+        return {"project": self.name, "branch": branch or "(detached HEAD)", "head": None if empty else self.head(), "empty": empty,
                 "upstream": upstream, "remote": self.relationship(branch, upstream),
                 "clean": not changes, "tracked": tracked, "untracked": untracked,
                 "localChanges": changes, "serverTime": time.time(), "historical": historical,
                 "preview": bool(self.preview)}
 
     def history(self, offset: int, remembered_branch: str | None = None) -> dict[str, object]:
+        if not self.has_head():
+            return {"commits": [], "hasMore": False, "nextOffset": 0}
         ref = self.return_branch(remembered_branch)
         raw = self.run("log", ref, f"--skip={offset}", f"-n{HISTORY_PAGE_SIZE + 1}",
                        "--date=iso-strict", "--format=%H%x00%h%x00%ad%x00%s%x1e")
@@ -254,7 +260,8 @@ class Project:
 
     def diff(self) -> dict[str, object]:
         untracked = [str(x["path"]) for x in self.changes() if x["untracked"]]
-        return {"diff": self.run("diff", "--no-ext-diff", "--no-color", "HEAD", "--", check=False),
+        args = ["HEAD"] if self.has_head() else ["--cached"]
+        return {"diff": self.run("diff", "--no-ext-diff", "--no-color", *args, "--", check=False),
                 "untracked": untracked,
                 "note": "Untracked file contents are not included in Git diff."}
 
@@ -303,8 +310,8 @@ def load_projects(config_path: Path) -> dict[str, Project]:
     except (OSError, ValueError) as exc:
         raise ValueError(f"Unable to read project configuration {config_path}: {exc}") from exc
     entries = data.get("projects") if isinstance(data, dict) else None
-    if not isinstance(entries, dict) or not entries:
-        raise ValueError("projects.json must contain a nonempty projects object.")
+    if not isinstance(entries, dict):
+        raise ValueError("projects.json must contain a projects object.")
     projects = {}
     for name, value in entries.items():
         if not isinstance(name, str) or not name or not isinstance(value, dict):

@@ -97,7 +97,7 @@
 <body>
 <main>
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
-  <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select></section>
+  <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select><button id="addProject" style="margin-top:10px">+ Add Project</button><p id="emptyProjects" class="muted hidden">No projects yet. Add a repository to start working.</p></section>
   <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button><button id="productsTab" class="hidden">Products</button></nav>
   <a class="button" id="openTerminal" target="_blank" rel="noopener">OPEN TERMINAL</a>
   <div id="repositoryView">
@@ -186,6 +186,17 @@
   <div id="modalContent"></div>
   <div class="grid"><button id="modalCancel">CANCEL</button><button class="primary" id="modalConfirm">CONFIRM</button></div>
 </div></dialog>
+<dialog id="addProjectDialog"><div class="modal-body">
+  <h2>Add Project</h2>
+  <label for="repositoryUrl">Git repository URL</label>
+  <input id="repositoryUrl" type="text" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="git@github.com:owner/project.git">
+  <div id="projectClonePreview" class="hidden"><p>Repository:<br><strong id="cloneRepository"></strong></p><p>Local project:<br><strong id="cloneLocalPath"></strong></p></div>
+  <p id="cloneStatus" role="status" aria-live="polite"></p>
+  <pre id="cloneOutput" class="hidden" style="max-height:220px;overflow:auto"></pre>
+  <div class="grid"><button id="closeAddProject">CLOSE</button><button class="primary" id="cloneProject" disabled>Clone Project</button></div>
+  <button id="cancelClone" class="danger hidden" style="margin-top:10px">Cancel clone</button>
+  <button id="openExistingProject" class="hidden" style="margin-top:10px">Open existing project</button>
+</div></dialog>
 <dialog id="shotPreview"><div class="modal-body"><h2 id="shotPreviewTitle"></h2><img id="shotPreviewImage" alt="Screenshot preview"><div class="grid"><button id="closeShotPreview">CLOSE</button><a class="button primary" id="shotPreviewDownload" download>DOWNLOAD PNG</a></div></div></dialog>
 <dialog id="catalogueImageDialog"><div class="modal-body"><h2>Choose a product image</h2><label for="catalogueImageSearch">Search project images</label><input id="catalogueImageSearch" type="search"><div id="catalogueImageResults"></div><label for="catalogueImageUpload">Or upload from this device</label><input id="catalogueImageUpload" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif"><button id="catalogueImageClose">CLOSE</button></div></dialog>
 
@@ -232,13 +243,17 @@
       init.headers['X-Linko-CSRF'] = csrf;
       init.body = JSON.stringify(options.body || {});
     }
-    if (selectedProject && path.startsWith('/api/') && path !== '/api/projects') {
+    if (selectedProject && path.startsWith('/api/') && path !== '/api/projects' && !path.startsWith('/api/projects/')) {
       if (init.method === 'POST') init.body = JSON.stringify({...options.body, project:selectedProject});
       else path += `${path.includes('?') ? '&' : '?'}${projectParam()}`;
     }
     const response = await fetch(path, init);
     const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error([data.error, data.output].filter(Boolean).join('\n'));
+    if (!response.ok || !data.ok) {
+      const error = new Error([data.error, data.output].filter(Boolean).join('\n'));
+      error.data = data;
+      throw error;
+    }
     return data;
   }
 
@@ -268,7 +283,7 @@
     applyMode();
     const heading = $('statusHeading');
     const changeCount = data.localChanges.length;
-    heading.textContent = data.clean
+    heading.textContent = data.empty && data.clean ? 'EMPTY REPOSITORY · READY FOR YOUR FIRST FILES' : data.clean
       ? 'ALL CHANGES SAVED'
       : `${changeCount} UNSAVED ${changeCount === 1 ? 'CHANGE' : 'CHANGES'}`;
     heading.classList.toggle('saved', data.clean);
@@ -518,17 +533,33 @@
     finally { setBusy(false); }
   };
 
-  async function start() {
-    try {
+  async function loadProjects() {
       const data = await api('/api/projects');
       csrf = data.csrfToken;
       $('version').textContent = `v${data.version}`;
+      $('project').replaceChildren();
+      capturePagesByProject = {};
+      catalogueByProject = {};
       for (const item of data.projects) {
         const option = document.createElement('option'); option.value = item.name; option.textContent = item.name;
         option.dataset.previewUrl = item.previewUrl || ''; $('project').append(option);
         capturePagesByProject[item.name] = item.capturePages || [];
         catalogueByProject[item.name] = Boolean(item.catalogue);
       }
+      const empty = data.projects.length === 0;
+      $('emptyProjects').classList.toggle('hidden', !empty);
+      $('project').disabled = empty;
+      document.querySelector('.view-tabs').classList.toggle('hidden', empty);
+      $('repositoryView').classList.toggle('hidden', empty || !$('screenshotsView').classList.contains('hidden') || !$('productsView').classList.contains('hidden'));
+      $('openTerminal').classList.toggle('hidden', empty);
+      if (data.projects.some(p => p.name === selectedProject)) $('project').value = selectedProject;
+      return data;
+  }
+
+  async function start() {
+    try {
+      const data = await loadProjects();
+      if (!data.projects.length) { $('online').textContent = '● Server online'; return; }
       const params = new URL(location.href).searchParams;
       const stored = params.get('project') || localStorage.getItem('devPanelProject');
       selectedProject = data.projects.some(p => p.name === stored) ? stored : data.projects[0].name;
@@ -717,5 +748,6 @@
   start();
 </script>
 <script src="/catalogue-editor.js"></script>
+<script src="/project-onboarding.js"></script>
 </body>
 </html>

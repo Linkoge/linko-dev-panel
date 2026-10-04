@@ -44,6 +44,13 @@
 #productsView .detail-editor .editor-actions > *, #productsView .format-toolbar > * { width:auto; }
 #productsView .detail-editor-toolbar { position:sticky; top:0; z-index:5; padding:12px 0; background:#100805; }
 #productsView .editor-help { color:#b3bac4; line-height:1.6; }
+#productsView .product-images-editor { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr)); gap:12px; margin:16px 0; }
+#productsView .product-image-item { min-width:0; padding:12px; background:#15181d; border:1px solid #4b3b35; border-radius:12px; }
+#productsView .product-image-item h4 { margin:0 0 12px; }
+#productsView .product-image-item img { display:block; width:100%; height:150px; object-fit:contain; margin-bottom:10px; }
+#productsView .product-image-item img[hidden] { display:none; }
+#productsView .product-image-item .editor-actions > button { flex:1 1 100px; min-height:44px; }
+#productsView .image-unavailable { color:#ffad5c; }
 @media (max-width:799px) {
   main:has(.detail-editor) { width:100%; padding-inline:12px; }
   #productsView .detail-editor .structured-row { padding:10px; }

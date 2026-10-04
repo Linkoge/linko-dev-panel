@@ -66,6 +66,15 @@ class BackendTests(unittest.TestCase):
             if sys.platform!='win32' or getattr(exc,'winerror',None)!=1314: raise
             self.skipTest(f'Windows symlink permission is required: {exc}')
         self.assertFalse(any(item['path'].endswith('escape.png') for item in CB.images(self.project)))
+    def test_ordered_images_with_older_generator(self):
+        state=CB.snapshot(self.project);p=state['products']['mounts']
+        p['images']=[p.pop('image'),{'path':'assets/product-images/mounts.svg','alt':{'ka':'Second'}}]
+        p.pop('gallery')
+        CB.save(self.project,state)
+        self.assertEqual(CB.snapshot(self.project)['products']['mounts']['images'],p['images'])
+        stored=json.loads((self.root/'data/products/mounts.json').read_text())
+        self.assertNotIn('image',stored);self.assertNotIn('gallery',stored)
+        self.assertIn('mounts.svg',(self.root/'products.html').read_text())
     def test_edit_upload_reorder_category_and_draft_round_trip(self):
         picture=Image.new('RGB',(12,12),'red');stream=io.BytesIO();picture.save(stream,format='PNG')
         upload={'name':'Phone Photo.png','data':base64.b64encode(stream.getvalue()).decode()}

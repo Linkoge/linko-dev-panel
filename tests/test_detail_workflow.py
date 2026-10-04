@@ -19,17 +19,20 @@ class DetailWorkflowTests(unittest.TestCase):
     def test_save_reopen_generate_and_preserve_catalogue(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ('catalogue.py', 'templates/products.html', 'assets/product-images/mounts.svg'):
+            for name in ('catalogue.py', 'sitemap.py', 'templates/products.html', 'assets/product-images/mounts.svg'):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(SOURCE / name, target)
             (root / 'data/products').mkdir(parents=True)
-            product = json.loads((SOURCE / 'data/products/mounts.json').read_text())
+            # Use fixed content: live product translations may be incomplete,
+            # which intentionally makes the current generator fall back to ka.
+            product = json.loads((Path(__file__).parent / 'fixtures/linko/data/products/mounts.json').read_text())
             product.update(destination={'mode':'generated'}, detailReady=True, visible=True)
             product['image'].update(path='assets/product-images/mounts.svg')
             product['image'].pop('secondary',None)
             product['gallery'] = []
             product['preservedField'] = {'unknown':'keep this'}
+            product['title'].update(en='Mounts',ru='Крепления')
             (root/'data/products/mounts.json').write_text(json.dumps(product))
             catalog = {'version':1,'categories':[],'root':[{'type':'product','id':'mounts'}]}
             (root/'data/catalog.json').write_text(json.dumps(catalog))
@@ -39,10 +42,10 @@ class DetailWorkflowTests(unittest.TestCase):
             state = backend.snapshot(project)
             p = state['products']['mounts']
             p['description'] = [{'heading':{'ka':'სათაური','en':'Heading','ru':'Заголовок'}, 'body':{'ka':'პირველი ხაზი\nმეორე ხაზი\n\n**მუქი**\n- ერთი\n- ორი','en':'**Bold**\n\n- One\n- Two','ru':'**Текст**'}}]
-            p['priceNote'] = {'ka':'შენიშვნა','en':'Price note'}
-            p['specifications'] = [{'label':{'ka':'ფერი','en':'Colour'},'value':{'ka':'შავი','en':'Black'}}]
+            p['priceNote'] = {'ka':'შენიშვნა','en':'Price note','ru':'Примечание'}
+            p['specifications'] = [{'label':{'ka':'ფერი','en':'Colour','ru':'Цвет'},'value':{'ka':'შავი','en':'Black','ru':'Чёрный'}}]
             p['gallery'] = ['assets/product-images/mounts.svg',{'path':'assets/product-images/mounts.svg','alt':{'ka':'სურათი','en':'Alt text','ru':'Фото'}}]
-            p['included'] = [{'ka':'ნაწილი','en':'Part'}]
+            p['included'] = [{'ka':'ნაწილი','en':'Part','ru':'Деталь'}]
             expected = copy.deepcopy(p)
             backend.save(project,state)
             reopened = backend.snapshot(project)
