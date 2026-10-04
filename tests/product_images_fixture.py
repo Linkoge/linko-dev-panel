@@ -24,7 +24,10 @@ def create(root):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(SOURCE/name, target)
     (root/'data/products').mkdir(parents=True)
-    p = json.loads((SOURCE/'data/products/mounts.json').read_text())
+    source = SOURCE/'data/products/P05.json'
+    if not source.exists(): source = SOURCE/'data/products/mounts.json'
+    p = json.loads(source.read_text())
+    p.update(id='mounts', slug='mounts')  # Stable legacy fixture also exercises old-schema compatibility.
     p.update(destination={'mode':'generated'}, detailReady=True, visible=True, gallery=[])
     p['image']['path'] = 'assets/product-images/mounts.svg'
     p['image'].pop('secondary', None)

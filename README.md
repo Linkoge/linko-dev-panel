@@ -22,6 +22,25 @@ Each card's **Edit product page** button opens a full-width view of the existing
 
 Direct editor links use `/?project=Linko&view=products&product=<product-id>`; for example `/?project=Linko&view=products&product=starlink-installation`. The detail template and optional localized `priceNote` field are supplied by the updated Linko generator. Legacy image objects and gallery path strings remain readable without reopening or resaving products.
 
+With Linko catalogue schema v2, **Add Product**, **Add Service** and **Add Package**
+create pending drafts. The server assigns a read-only permanent Pxx/Sxx ID on the
+first successful save; duplicates get a new identity. Ordering remains separate.
+The editor displays IDs, editable Latin slugs, **Suggest slug**, and generated URLs.
+Blank draft slugs are generated from English/Latin title words on save. Existing
+names, prices, images, visibility and order can be edited without changing identity.
+New direct editor links use `product=P01`; old-ID bookmarks still resolve.
+
+Saved previews follow `/products/P01-starlink-standard-4x` or `/services/S01-…`,
+prefixed with `/en` or `/ru` for those languages, inside the panel's project scope.
+Current and historical previews resolve clean routes. Incomplete translated pages
+remain non-indexable until complete. Historical catalogue views are read-only.
+Catalogue restoration retains current routing infrastructure/templates and issued
+IDs/aliases while restoring item content, order and assets; it then regenerates
+and creates the normal restore commit. The website's ignored issuance ledger also
+preserves numbers across discarded edits. Copy it when moving the authoritative
+editing checkout; use one panel checkout for ID allocation. Other projects and
+older catalogue schemas retain their existing behavior.
+
 **Save & Generate** validates the complete catalogue, writes its JSON source files, and regenerates the static HTML pages. A stale editor tab is rejected and must be reloaded. **Preview HTML** opens the local generated page. Saving does not commit, push, or deploy. Use the Repository tab to review and commit, then explicitly push; commit preparation and push check that generated catalogue HTML is current. Other configured projects keep their existing behavior.
 
 Product images use one ordered `images` array of objects, for example:
@@ -45,17 +64,42 @@ The panel loads `catalogue.py` from the selected Linko checkout. On Windows, a s
 
 ## Quick start on Linux
 
-You need **Python 3.10+**, **Git**, and your existing local Linko checkout. Install the Python dependency from the panel directory:
+This is the installation runbook for AI agents as well as humans. When asked to set up the panel, complete dependency installation, project configuration, persistent startup, and the checks below. Report the resulting browser URL and any feature that remains unavailable. Use the existing checkout and inspect any installed service before changing it; preserve its project paths and custom environment settings.
+
+### 1. Install dependencies
+
+Run as the Linux account that owns the repositories. You need **Python 3.10+**, **Git**, and the local repositories you want to manage. The browser terminal also needs **tmux**, **Node.js 20+**, and **npm** to install its browser assets. Screenshot capture additionally needs **Google Chrome or Chromium**. Node does not run the panel server.
+
+Check the available commands first:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 --version
+git --version
+tmux -V
+node --version
+npm --version
 ```
 
-If your Linux distribution requires a virtual environment, create one with `python3 -m venv .venv`, activate it with `source .venv/bin/activate`, then run that installation command. To use commit and restore, configure `user.name` and `user.email` in Git. Screenshot capture additionally needs **Node.js 20+**, **Google Chrome or Chromium**, and Playwright:
+On Debian/Ubuntu, install missing packages using the host's package manager, for example:
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv git tmux nodejs npm curl
+```
+
+Verify that the installed Node version is at least 20. If the distribution provides an older version, install a supported Node LTS release from [Node.js](https://nodejs.org/en/download). For an installation without root access, its official Linux archive can be extracted under `~/.local/share/dev-panel/`; verify it against the release's `SHASUMS256.txt`, choose the host's architecture, and add the extracted `bin` directory to `PATH` before running npm. Reuse an existing suitable installation rather than installing a second copy. A user-installed Node also needs an explicit path in the service settings below.
+
+Use the existing panel checkout. For a new installation, the standard layout is `~/projects/linko-dev-panel`; clone `https://github.com/Linkoge/linko-dev-panel.git` there if it is absent. From the actual panel directory, install into a virtual environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 npm ci
 ```
+
+`npm ci` is required for the browser terminal even if screenshot capture is unused. Install Chrome/Chromium through the host's supported installation method if screenshots are needed. Set `LINKO_PANEL_CHROME` to its absolute executable path if it is not on `PATH`. Normal Git controls, products, previews, and terminals do not need Chrome. The screenshot code uses this Chrome/Chromium executable; installing Playwright's bundled browser alone does not configure it.
+
+### 2. Configure the repositories
 
 The checked-in `projects.json` expects Linko in `../Linko` and the panel in `.` relative to that configuration file. This preserves the original Linux sibling-directory layout. For another Linko location, set:
 
@@ -63,7 +107,7 @@ The checked-in `projects.json` expects Linko in `../Linko` and the panel in `.` 
 export LINKO_REPO_PATH="$HOME/projects/Linko"
 ```
 
-Alternatively, copy `projects.json` to Git-ignored `projects.local.json` and edit that file. Paths can be absolute or relative to the configuration file's directory. For example:
+Alternatively, copy `projects.json` to Git-ignored `projects.local.json` if a local configuration does not already exist, and configure the intended repositories there. Paths can be absolute or relative to the configuration file's directory. Local settings replace the configured entries; automatic discovery adds eligible repositories from the projects directory. If Linko is absent, remove its entry from the local configuration and retain the repositories that exist; no Linko checkout is required for projects without catalogue features. An empty `"projects": {}` also works for an installation using discovery and Add Project. For example:
 
 ```json
 {
@@ -78,20 +122,138 @@ Alternatively, copy `projects.json` to Git-ignored `projects.local.json` and edi
 }
 ```
 
-Then run:
+The projects directory defaults to the panel checkout's parent, normally `~/projects`. Verify it is the intended directory for discovery and cloning; set `LINKO_PROJECTS_DIR` or the local configuration's `projectsDirectory` to override it. It must exist and be writable for cloning. Preserve explicit settings for repositories needing previews or catalogue features; discovered repositories have Git and terminal controls without those extra settings. See [Add Project and discovery](#add-project-and-discovery-phase-2) for details.
+
+To use commit and restore, ensure `user.name` and `user.email` are configured in Git. Reuse the owner's existing identity; do not invent one. Push/pull additionally need working remote authentication, configured through the owner's normal Git credentials or SSH setup. The panel disables interactive Git credential prompts.
+
+Validate the configuration without starting a server:
 
 ```bash
-./start.sh
-# Or: python3 server.py
+.venv/bin/python - <<'PY'
+from pathlib import Path
+from project_onboarding import ProjectRegistry, projects_directory
+from repository import configuration_path, load_projects
+panel = Path.cwd()
+config = configuration_path(panel)
+registry = ProjectRegistry(projects_directory(panel, config), load_projects(config))
+print(f"Projects directory: {registry.root}")
+for name, project in registry.refresh().items():
+    print(f"{name}: {project.path}")
+PY
 ```
 
-Open <http://localhost:8765/>. By default, the server listens on localhost. It prints each resolved repository path at startup. A project path must exist and be a Git working-tree root; configured HTML pages must exist inside it. A catalogue project must contain `catalogue.py`, `data/catalog.json`, `data/products/`, and `templates/products.html`. Invalid configuration stops startup with a readable error.
+A project path must exist and be a Git working-tree root; configured HTML pages must exist inside it. A catalogue project must contain `catalogue.py`, `data/catalog.json`, `data/products/`, and `templates/products.html`. Invalid configuration stops startup with a readable error.
 
 `remote` defaults to `origin`. Use `null` for a local-only repository; push, pull, and remote comparison will be unavailable. `preview` is optional and must be a relative path to an HTML file in the repository, using forward slashes. `capturePages` is an optional list of additional relative HTML pages available for screenshots; the `preview` page is always included. `capturePages` requires `preview`. Omit both for projects without a website. Restart after changing project settings or environment variables.
 
+### 3. Choose localhost or Tailscale access
+
+The default is `127.0.0.1:8765`, reachable only on the server itself. For a temporary foreground run:
+
+```bash
+.venv/bin/python server.py
+# Or, after activating the virtual environment:
+# source .venv/bin/activate
+# ./start.sh
+```
+
+Open <http://localhost:8765/> and stop with Ctrl+C. For a persistent installation, use the service in the next step instead of leaving a foreground process running.
+
+For phone access, the Linux host and phone must be connected to the same Tailscale network with permission to reach the panel's port. Check the host's existing Tailscale connection:
+
+```bash
+tailscale status
+tailscale ip -4
+```
+
+Use the host's actual Tailscale IPv4 address as `LINKO_PANEL_HOST`, port `8765` as `LINKO_PANEL_PORT`, and its Tailscale hostname(s) as comma-separated `LINKO_PANEL_ALLOWED_HOSTS` if hostname access is desired. The bound IP is already accepted as a Host. Discover these values on each installation; do not copy another machine's IP. If Tailscale is missing or disconnected, complete that host's Tailscale setup first; account/device authorization may require the owner.
+
+Bind to the Tailscale address for private phone access. The panel has no login, and its terminal grants shell access as its Linux account. Restrict access to trusted devices/users; do not bind to all interfaces or publish it through Funnel or a public proxy.
+
+### 4. Install a persistent systemd user service
+
+Run `systemctl --user` as the repository owner, without sudo. First inspect any existing installation:
+
+```bash
+systemctl --user cat linko-dev-panel.service
+systemctl --user status linko-dev-panel.service --no-pager
+ss -ltnp 'sport = :8765'
+```
+
+A missing unit is expected on a fresh host. The checked-in service assumes `~/projects/linko-dev-panel` and uses its `.venv/bin/python`. For a fresh installation:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp linko-dev-panel.service ~/.config/systemd/user/
+```
+
+Before enabling it, update the installed unit's `WorkingDirectory` and `ExecStart` if the checkout is elsewhere. For an existing service, update only the required settings and preserve its custom configuration. For Tailscale access, set these environment lines in the installed unit's `[Service]` section, replacing the example values with those discovered above:
+
+```ini
+Environment=LINKO_PANEL_HOST=100.x.y.z
+Environment=LINKO_PANEL_PORT=8765
+Environment=LINKO_PANEL_ALLOWED_HOSTS=host-name,host-name.tail-example.ts.net
+```
+
+Persist any `LINKO_REPO_PATH`, `LINKO_PANEL_CONFIG`, `LINKO_PROJECTS_DIR`, `LINKO_PANEL_NODE`, or `LINKO_PANEL_CHROME` overrides in that same section. For a user-installed Node, set `LINKO_PANEL_NODE` to the absolute path returned by `command -v node`; set the service's `PATH` too if terminal applications need tools outside the usual system directories. The service does not inherit exports from your current terminal and does not load `.env`. Keep `KillMode=process` so panel restarts preserve tmux sessions.
+
+Then start it (restart an already-running service after a settings change):
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now linko-dev-panel.service
+# After changing an already-running service:
+# systemctl --user restart linko-dev-panel.service
+systemctl --user status linko-dev-panel.service --no-pager
+```
+
+Check user lingering so the service starts at boot and continues after logout:
+
+```bash
+loginctl show-user "$(id -un)" -p Linger
+# If Linger=no and this host permits it:
+sudo loginctl enable-linger "$(id -un)"
+```
+
+If `systemctl --user` cannot connect to the user bus, run these commands in the owner's normal login session or arrange the host's user-service support. Do not substitute a root service. A foreground run is only a temporary fallback and ends when its process/session ends.
+
+### 5. Verify and return the URL
+
+Use the configured host and port. For Tailscale, the following discovers this host's IP; for localhost, use `PANEL_URL=http://127.0.0.1:8765` instead:
+
+```bash
+set -euo pipefail
+PANEL_IP=$(tailscale ip -4)
+test -n "$PANEL_IP"
+PANEL_URL="http://$PANEL_IP:8765"
+systemctl --user is-active linko-dev-panel.service
+systemctl --user is-enabled linko-dev-panel.service
+ss -ltnp 'sport = :8765'
+curl --fail --silent --show-error "$PANEL_URL/" -o /dev/null
+curl --fail --silent --show-error "$PANEL_URL/api/projects" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"]; print("Projects:", ", ".join(p["name"] for p in d["projects"]))'
+curl --fail --silent --show-error "$PANEL_URL/terminal-assets/xterm.js" -o /dev/null
+curl --fail --silent --show-error "$PANEL_URL/terminal-assets/xterm.css" -o /dev/null
+curl --fail --silent --show-error "$PANEL_URL/terminal-assets/addon-fit.js" -o /dev/null
+printf 'Browser URL: %s/\n' "$PANEL_URL"
+```
+
+For each configured or discovered project returned by `/api/projects`, check `/api/status?project=<URL-encoded-name>` and `/api/terminal/status?project=<URL-encoded-name>`. The terminal should report `available: true`; `running: false` is normal before the first terminal connection. Check `/terminal?project=<URL-encoded-name>` loads too. These checks do not create a terminal or change a repository. Report screenshot capture as available only after checking its browser dependency; HTTP success alone does not verify that feature.
+
+On the phone, connect Tailscale and open the returned **HTTP URL including `:8765`**. A check from the server verifies its listener and responses, but does not establish that the phone's Tailscale policy/connectivity works.
+
+If startup or access fails:
+
+- **Service exits:** inspect `journalctl --user -u linko-dev-panel.service -n 50 --no-pager`; check its Python path, dependencies, and project configuration.
+- **Pillow or terminal dependencies missing:** install `requirements.txt` with the same `.venv/bin/python` used by `ExecStart`.
+- **Terminal assets return 404:** run `npm ci` in the actual panel checkout.
+- **Address already in use:** identify the existing listener/service before starting another copy. Reuse it or configure another port explicitly.
+- **Cannot assign requested address:** check Tailscale is connected and the configured bind IP belongs to this host.
+- **HTTP 403 / Host is not allowed:** add the hostname used in the browser to `LINKO_PANEL_ALLOWED_HOSTS` and restart.
+- **Phone times out while host checks pass:** check the phone's Tailscale connection, tailnet access rules, and host firewall for the configured port.
+
 ## Add Project and discovery (Phase 2)
 
-The standard projects directory is the **parent of the installed Dev Panel directory**, normally `~/projects` when the panel is in `~/projects/dev-panel`. To override it, set `LINKO_PROJECTS_DIR` or add a top-level `"projectsDirectory"` to the selected settings file. The environment variable takes precedence. Relative paths resolve beside that settings file; `~` expands to the server user's home. The directory must already exist and be writable for cloning. For example:
+The standard projects directory is the **parent of the installed Dev Panel directory**, normally `~/projects` when the panel is in `~/projects/linko-dev-panel`. To override it, set `LINKO_PROJECTS_DIR` or add a top-level `"projectsDirectory"` to the selected settings file. The environment variable takes precedence. Relative paths resolve beside that settings file; `~` expands to the server user's home. The directory must already exist and be writable for cloning. For example:
 
 ```json
 {
@@ -203,11 +365,11 @@ The architecture is **xterm.js → same-port WebSocket → real Linux PTY → tm
 On the Linux server, install **tmux** through your distribution's package manager (for Debian/Ubuntu: `sudo apt install tmux`). Then, from the panel directory:
 
 ```bash
-python3 -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 npm ci
 ```
 
-Use a virtual environment when required by the distribution. `simple-websocket` (1.1.0, backed by wsproto) handles WebSocket framing, heartbeat and socket integration with the existing HTTP server. `ptyprocess` (0.7.0, Linux only) handles PTY creation, terminal dimensions and child cleanup. `@xterm/xterm` (6.0.0) supplies maintained terminal emulation and native browser paste handling; `@xterm/addon-fit` (0.11.0) measures browser terminal dimensions. npm assets are served locally from an explicit three-file allowlist; no CDN or browser network dependency is introduced. Node is needed to install these assets, but the terminal bridge runs in Python and tmux, without a Node server. Existing Pillow and Playwright dependencies are retained.
+Create `.venv` first as described in [Quick start on Linux](#quick-start-on-linux). `simple-websocket` (1.1.0, backed by wsproto) handles WebSocket framing, heartbeat and socket integration with the existing HTTP server. `ptyprocess` (0.7.0, Linux only) handles PTY creation, terminal dimensions and child cleanup. `@xterm/xterm` (6.0.0) supplies maintained terminal emulation and native browser paste handling; `@xterm/addon-fit` (0.11.0) measures browser terminal dimensions. npm assets are served locally from an explicit three-file allowlist; no CDN or browser network dependency is introduced. Node is needed to install these assets, but the terminal bridge runs in Python and tmux, without a Node server. Existing Pillow and Playwright dependencies are retained.
 
 `start.sh`, `python3 server.py`, host/port settings, and existing project configuration continue to work. Restart the running panel after installing dependencies. If systemd uses a virtual environment, set `ExecStart` to that environment's Python, as described in Configuration and access.
 
@@ -280,16 +442,9 @@ Selection order is an explicit `LINKO_PANEL_CONFIG`, then local settings, then c
 
 These `LINKO_PANEL_` names are retained for compatibility with the original installation. To reach the panel from another device, bind to an address that device can reach and restrict access with a firewall or a private network such as Tailscale. **There is no login or TLS. Anyone who can reach the port can use the Git controls.** Mutating requests require a CSRF token and an origin check, but these do not replace network access control.
 
-The included [`linko-dev-panel.service`](linko-dev-panel.service) is a systemd user-service template. It uses `%h` for the user's home directory and assumes the panel is in `~/projects/dev-panel`. Adjust `WorkingDirectory` and `ExecStart` if needed; a virtual environment requires its Python in `ExecStart`. Set `Environment=LINKO_REPO_PATH=...` if Linko is elsewhere. Set `LINKO_PANEL_HOST` and `LINKO_PANEL_ALLOWED_HOSTS` as needed for LAN/Tailscale access; these remain supported. A custom Node installation can use `LINKO_PANEL_NODE`. Existing installed services are not changed by updating this repository. Then install it:
+The included [`linko-dev-panel.service`](linko-dev-panel.service) is a systemd user-service template. It uses `%h` for the user's home directory, assumes `~/projects/linko-dev-panel`, and starts that checkout's virtual-environment Python. Follow [the Linux installation runbook](#quick-start-on-linux) to configure paths, private access, persistent startup, and verification. Existing installed services are not changed by updating this repository.
 
-```bash
-mkdir -p ~/.config/systemd/user
-cp linko-dev-panel.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now linko-dev-panel.service
-```
-
-After changing Python, HTML, or project settings, restart with `systemctl --user restart linko-dev-panel.service`. After changing the service file, copy it again and run `systemctl --user daemon-reload` before restarting. Restarting during a capture interrupts it.
+After changing Python, HTML, or project settings, restart with `systemctl --user restart linko-dev-panel.service`. After editing the installed service file, run `systemctl --user daemon-reload` before restarting. Restarting during a capture interrupts it.
 
 ## Git behavior
 

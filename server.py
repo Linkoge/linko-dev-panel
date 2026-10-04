@@ -15,7 +15,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from repository import GitError, Project, configuration_path, load_projects, preview_url, snapshot, web_path
 import screenshots
@@ -268,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.error("Not found.", HTTPStatus.NOT_FOUND)
             elif path.startswith("/site/") or path.startswith("/versions/"):
-                self.preview_route(path)
+                self.preview_route(path, url.query)
             elif path.startswith("/preview") and "Linko" in PROJECTS and PROJECTS["Linko"].preview:
                 # Existing bookmarks retain their entry point.
                 self.redirect(preview_url("Linko", PROJECTS["Linko"].preview))
@@ -465,7 +465,7 @@ class Handler(BaseHTTPRequestHandler):
             RETURN_BRANCHES.pop(project.name, None)
         self.send_json({"ok": True, "output": f"Returned to {branch}.", **project.status()})
 
-    def preview_route(self, path: str) -> None:
+    def preview_route(self, path: str, query: str = '') -> None:
         parts = path.strip("/").split("/")
         historical = parts[0] == "versions"
         if len(parts) < (4 if historical else 3):
@@ -479,13 +479,28 @@ class Handler(BaseHTTPRequestHandler):
         if relative_parts[0] == "preview":
             relative_parts = relative_parts[1:]
         decoded = unquote("/".join(relative_parts))
+        # Validate raw paths before resolving routes. Empty means the website homepage.
+        if decoded:
+            try: web_path(decoded)
+            except ValueError:
+                self.error("Invalid preview path.", HTTPStatus.FORBIDDEN)
+                return
+        preview_path = decoded+('/' if decoded and path.endswith('/') else '')
+        filename, canonical = catalogue_backend.preview_route(project, preview_path, query, commit)
+        if canonical:
+            prefix = f'/versions/{quote(project.name, safe="")}/{commit}/preview' if historical else f'/site/{quote(project.name, safe="")}/preview'
+            self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+            self.send_header('Location',prefix+canonical)
+            self.security_headers(); self.end_headers()
+            return
+        decoded = filename
         try:
             relative = web_path(decoded)
         except ValueError:
             self.error("Invalid preview path.", HTTPStatus.FORBIDDEN)
             return
         if relative.suffix.lower() not in PREVIEW_EXTENSIONS:
-            self.error("This file type is not available through preview.", HTTPStatus.FORBIDDEN)
+            self.error("Not found.", HTTPStatus.NOT_FOUND if not relative.suffix else HTTPStatus.FORBIDDEN)
             return
         if historical:
             try:

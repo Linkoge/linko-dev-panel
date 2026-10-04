@@ -295,6 +295,11 @@ class Project:
             raise ValueError("The working tree changed after review. Commit or handle those files first.")
         if self.run("rev-parse", "HEAD^{tree}").strip() == self.run("rev-parse", f"{commit}^{{tree}}").strip():
             raise ValueError("The selected version already matches the current files.")
+        if self.catalogue:
+            import catalogue_backend
+            if hasattr(catalogue_backend.engine(self.path),'prepare_save'):
+                restored = catalogue_backend.restore_version(self,commit)
+                if restored is not None: return restored
         self.run("restore", f"--source={commit}", "--staged", "--worktree", "--", ":/")
         return self.run("commit", "-m", f"Restore version {commit[:12]}", timeout=60).strip()
 

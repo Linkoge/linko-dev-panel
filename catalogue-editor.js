@@ -1,10 +1,22 @@
 (() => {
   const $ = id => document.getElementById(id);
   const view = $('productsView');
-  let state=null, revision='', dirty=false, categoryId=null, showHidden=true, imageTarget=null, loadedProject='', editingId=null, savedProducts={}, editLanguage='ka', catalogScroll=0, changes=0, saving=false;
+  let state=null, revision='', dirty=false, categoryId=null, showHidden=true, imageTarget=null, loadedProject='', editingId=null, savedProducts={}, editLanguage='ka', catalogScroll=0, changes=0, saving=false, routes=null, readOnly=false;
   const el=(tag,cls,text)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node};
   const slug=value=>value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,45);
   const unique=(base,used)=>{let value=base,n=2;while(used.includes(value))value=`${base}-${n++}`;return value};
+  const modern=()=>state?.catalog.version===2;
+  const permanent=id=>/^[PS][0-9]+$/.test(id);
+  const kinds=p=>modern()&&permanent(p.id)?(p.id.startsWith('S')?[['service','Service']]:[['product','Product'],['package','Package']]):[['product','Product'],['service','Service'],['package','Package']];
+  function slugField(parent,p){
+    field(parent,'URL slug',p.slug,v=>set(p,'slug',v));
+    if(modern()){
+      parent.append(button('Suggest slug',()=>{p.slug=slug(p.title.en||p.title.ka)||'item';mark();render()}));
+      parent.append(el('p','editor-help','Latin/English words only. The ID stays fixed when the slug changes. Blank drafts receive a slug automatically on save.'));
+      const path=routes?.products[p.id]?.[editLanguage]?.path;
+      if(path)parent.append(el('p','editor-help',`Saved URL: https://linko.ge${path}`));
+    }
+  }
   const imageUrl=path=>`/site/${encodeURIComponent(loadedProject)}/preview/${path.split('/').map(encodeURIComponent).join('/')}`;
   // Legacy fields are read as one ordered list; migrate only on image edits.
   function productImages(p) {
@@ -74,6 +86,7 @@
     card.ondragover=e=>e.preventDefault();card.ondrop=e=>{e.preventDefault();const from=Number(e.dataTransfer.getData('text/plain'));if(Number.isInteger(from)&&from!==index)move(from,index-from)};
     const picture=button('',()=>replaceImage(p,0),'editor-image');picture.title='Choose or upload primary image';const img=el('img',primaryImage(p).presentation==='cutout'?'cutout':'');img.src=imageUrl(primaryImage(p).path);img.alt=primaryImage(p).alt.ka||'';picture.append(img);card.append(picture);
     const titlePreview=el('div','editor-title',p.title.ka);card.append(titlePreview);
+    if(modern())card.append(el('p','editor-help',permanent(p.id)?`ID: ${p.id}`:'ID assigned on save'));
     const pricePreview=el('div','editor-price'+(p.price.mode==='on-request'?' request':''),previewPrice(p));card.append(pricePreview);
     field(card,'Title',p.title.ka,v=>{p.title.ka=v;titlePreview.textContent=v;mark()});
     card.append(label('Price mode',choice(p.price.mode,[['on-request','On request'],['fixed','Fixed'],['starting-from','Starting from']],v=>{p.price.mode=v;p.price.amount=v==='on-request'?null:p.price.amount??0;pricePreview.textContent=previewPrice(p);pricePreview.classList.toggle('request',v==='on-request');mark();render()})));
@@ -85,12 +98,12 @@
     actions.append(button('Duplicate',()=>duplicate(p)),button('Edit product page',()=>openProduct(p.id),'editor-wide'),button('Manage images',()=>{openProduct(p.id);view.querySelector('.product-images-editor')?.scrollIntoView?.({block:'start'});},'editor-wide'));
     if(categoryId)actions.append(button('Remove from category',()=>{refs().splice(index,1);mark();render()},'editor-wide'));
     const details=el('details');details.append(el('summary','','Details & destination'));
-    details.append(label('Kind',choice(p.kind,[['product','Product'],['service','Service'],['package','Package']],v=>set(p,'kind',v))));
+    details.append(label('Kind',choice(p.kind,kinds(p),v=>set(p,'kind',v))));
     field(details,'Image alt text',primaryImage(p).alt.ka,v=>set(editImages(p)[0].alt,'ka',v));
     details.append(label('Destination',choice(p.destination.mode,[['none','No link'],['existing','Existing link'],['generated','Generated detail page']],v=>{p.destination.mode=v;if(v==='generated')p.detailReady=false;mark();render()})));
     if(p.destination.mode==='existing')field(details,'Existing URL',p.destination.url||'',v=>set(p.destination,'url',v));
     if(p.destination.mode==='generated')details.append(label('Publish detail page',choice(String(p.detailReady),[['false','Keep as draft'],['true','Publish generated page']],v=>set(p,'detailReady',v==='true'))));
-    field(details,'URL slug',p.slug,v=>set(p,'slug',v));
+    slugField(details,p);
     card.append(details);return card;
   }
   function localizedField(parent,title,obj,key,type='text') {
@@ -157,12 +170,14 @@
     const p=state.products[editingId];view.replaceChildren();
     const editor=el('div','detail-editor');
     const title=el('h2','',`Edit product page — ${p.title.ka}`);title.id='detailEditorTitle';title.tabIndex=-1;editor.append(title);
+    if(modern())editor.append(el('p','editor-help',permanent(p.id)?`Permanent ID: ${p.id}`:'Permanent ID will be assigned on first successful save.'));
     const toolbar=el('div','editor-toolbar detail-editor-toolbar');
     toolbar.append(button('← Back (keep edits)',closeProduct),button(saving?'Saving…':'Save & Generate',save,'primary'));
     toolbar.append(button('Preview saved page',()=>{
       const saved=savedProducts[p.id];
       if(!saved||saved.destination.mode!=='generated'||!saved.detailReady){status('Select Generated detail page and Publish detail page, then save to create a preview.',true);return}
-      window.open(imageUrl('product-'+saved.slug+'.html')+'?lang='+editLanguage,'_blank','noopener');
+      const route=routes?.products[p.id]?.[editLanguage];
+      window.open(route?imageUrl(route.path.slice(1)):imageUrl('product-'+saved.slug+'.html')+'?lang='+editLanguage,'_blank','noopener');
       if(dirty)status('Preview shows the last saved page. Save & Generate to include pending edits.');
     }));
     editor.append(toolbar);
@@ -182,7 +197,8 @@
     destination.append(label('Destination',choice(p.destination.mode,[['none','No link'],['existing','Existing link'],['generated','Generated detail page']],v=>{p.destination.mode=v;if(v==='generated')p.detailReady=false;mark();render()})));
     if(p.destination.mode==='existing')field(destination,'Existing URL',p.destination.url||'',v=>set(p.destination,'url',v));
     if(p.destination.mode==='generated')destination.append(label('Publish detail page',choice(String(p.detailReady),[['false','Keep as draft'],['true','Publish generated page']],v=>{set(p,'detailReady',v==='true')})));
-    field(destination,'URL slug',p.slug,v=>set(p,'slug',v));editor.append(destination);view.append(editor);
+    destination.append(label('Kind',choice(p.kind,kinds(p),v=>set(p,'kind',v))));
+    slugField(destination,p);editor.append(destination);view.append(editor);
   }
   function categoryCard(ref,index){const c=state.catalog.categories.find(item=>item.id===ref.id),card=el('div','editor-item'+(c.visible?'':' is-hidden'));
     const picture=button('',()=>pick(c,'image'),'editor-image');const img=el('img');img.src=imageUrl(c.image);picture.append(img);card.append(picture,el('div','editor-title',c.title.ka));
@@ -193,13 +209,13 @@
     card.append(label('Visibility',choice(String(c.visible),[['true','Visible'],['false','Hidden']],v=>{set(c,'visible',v==='true');card.classList.toggle('is-hidden',!c.visible)})));
     rowControls(card,ref,index);return card;
   }
-  function duplicate(p){const id=unique(p.id+'-copy',Object.keys(state.products)),copy=structuredClone(p);copy.id=id;copy.slug=unique(p.slug+'-copy',Object.values(state.products).map(x=>x.slug));copy.visible=false;copy.destination={mode:'none'};copy.detailReady=false;state.products[id]=copy;refs().push({type:'product',id});mark();render()}
-  function addProduct(){const id=unique('draft-product',Object.keys(state.products));const p={id,kind:'product',slug:id,title:{ka:'ახალი პროდუქტი'},images:[{path:'assets/product-images/mounts.svg',alt:{ka:''},presentation:'cover',width:240,height:240}],badge:null,price:{mode:'on-request',amount:null,currency:'GEL'},visible:false,availability:'available',destination:{mode:'none'},detailReady:false,description:[],specifications:[]};state.products[id]=p;refs().push({type:'product',id});mark();render()}
+  function duplicate(p){const id=unique(modern()?'draft-copy':p.id+'-copy',Object.keys(state.products)),copy=structuredClone(p);copy.id=id;copy.slug=unique(p.slug+'-copy',Object.values(state.products).map(x=>x.slug));copy.visible=false;copy.destination={mode:'none'};copy.detailReady=false;state.products[id]=copy;refs().push({type:'product',id});mark();render()}
+  function addProduct(kind='product'){const id=unique(modern()?'draft-new-'+kind:'draft-product',Object.keys(state.products));const p={id,kind,slug:modern()?'':id,title:{ka:kind==='service'?'ახალი სერვისი':'ახალი პროდუქტი'},images:[{path:'assets/product-images/mounts.svg',alt:{ka:''},presentation:'cover',width:240,height:240}],badge:null,price:{mode:'on-request',amount:null,currency:'GEL'},visible:false,availability:'available',destination:{mode:'none'},detailReady:false,description:[],specifications:[]};state.products[id]=p;refs().push({type:'product',id});mark();render()}
   function addCategory(){const id=unique('new-category',state.catalog.categories.map(c=>c.id));state.catalog.categories.push({id,slug:id,title:{ka:'ახალი კატეგორია'},image:'assets/product-images/mounts.svg',visible:false,priceMode:'view-options',entries:[]});state.catalog.root.push({type:'category',id});mark();render()}
   function addExisting(){const used=new Set(refs().filter(r=>r.type==='product').map(r=>r.id));const choices=Object.values(state.products).filter(p=>!used.has(p.id));if(!choices.length){status('Every product is already in this category.');return}const select=choice(choices[0].id,choices.map(p=>[p.id,p.title.ka]),()=>{});const dialog=$('modal');$('modalTitle').textContent='Add existing product';$('modalContent').replaceChildren(select);$('modalConfirm').textContent='ADD PRODUCT';$('modalConfirm').className='primary';dialog.oncancel=null;$('modalConfirm').onclick=()=>{refs().push({type:'product',id:select.value});dialog.close();mark();render()};$('modalCancel').onclick=()=>dialog.close();dialog.showModal()}
   function render(){if(!state)return;if(editingId){renderProduct();return;}view.replaceChildren();const toolbar=el('div','editor-toolbar');
     if(categoryId)toolbar.append(button('← Root catalogue',()=>{categoryId=null;render()}));
-    toolbar.append(button('Add Product',addProduct));if(!categoryId)toolbar.append(button('Add Category',addCategory));else toolbar.append(button('Add Existing Product',addExisting));
+    toolbar.append(button('Add Product',()=>addProduct()));if(modern())toolbar.append(button('Add Service',()=>addProduct('service')),button('Add Package',()=>addProduct('package')));if(!categoryId)toolbar.append(button('Add Category',addCategory));else toolbar.append(button('Add Existing Product',addExisting));
     toolbar.append(button(showHidden?'Show visible only':'Include hidden',()=>{showHidden=!showHidden;render()}));
     toolbar.append(button('Save & Generate',save,'primary'));
     toolbar.append(button('Reload JSON',()=>{if(dirty&&!window.confirm('Discard unsaved product changes and reload?'))return;load(true)}));
@@ -209,14 +225,31 @@
     const note=el('p','editor-status',dirty?'Unsaved changes':'Saved');note.id='catalogueStatus';view.append(note);
     const grid=el('div','editor-grid');for(const [index,ref] of refs().entries()){const item=ref.type==='product'?state.products[ref.id]:state.catalog.categories.find(c=>c.id===ref.id);if(!showHidden&&!item.visible)continue;grid.append(ref.type==='product'?productCard(ref,index):categoryCard(ref,index))}view.append(grid);
   }
-  async function load(force=false){if(!window.catalogueProject)return;const project=window.catalogueProject();if(!force&&state&&loadedProject===project)return;try{status('Loading…');const data=await api('/api/catalogue');state={catalog:data.catalog,products:data.products};revision=data.revision;savedProducts=structuredClone(data.products);loadedProject=project;categoryId=null;dirty=false;const requested=new URL(location.href).searchParams.get('product');editingId=state.products[requested]?requested:null;render()}catch(error){view.textContent=error.message}}
+  async function load(force=false){if(!window.catalogueProject)return;const project=window.catalogueProject();if(!force&&state&&loadedProject===project)return;try{status('Loading…');const data=await api('/api/catalogue');state={catalog:data.catalog,products:data.products};routes=data.routes||null;readOnly=data.readOnly||false;revision=data.revision;savedProducts=structuredClone(data.products);loadedProject=project;categoryId=null;dirty=false;const requested=new URL(location.href).searchParams.get('product');const resolved=state.products[requested]?requested:state.catalog.aliases?.['/product-'+requested];editingId=state.products[resolved]?resolved:null;if(editingId&&editingId!==requested)editorURL(editingId);render();if(readOnly)status('Historical catalogue is read-only. Return to the current branch to edit.',true)}catch(error){view.textContent=error.message}}
   async function save(){
     if(saving)return false;
+    if(readOnly){status('Historical catalogue is read-only. Return to the current branch to edit.',true);return false;}
     saving=true;const version=changes,submitted=structuredClone(state),project=loadedProject;status('Validating and generating…');
     try {
       const data=await api('/api/catalogue/save',{method:'POST',body:{revision,catalog:submitted.catalog,products:submitted.products}});
       if(project!==loadedProject)return true;
-      revision=data.revision;savedProducts=submitted.products;dirty=changes!==version;
+      revision=data.revision;savedProducts=data.products||submitted.products;dirty=changes!==version;
+      if(data.products){
+        routes=data.routes;
+        if(!dirty)state={catalog:data.catalog,products:data.products};
+        else{
+          for(const [temporary,id] of Object.entries(data.assignedIds||{})){
+            const current=state.products[temporary];if(!current)continue;
+            current.id=id;if(!current.slug)current.slug=data.products[id].slug;
+            state.products[id]=current;delete state.products[temporary];
+            for(const refs of [state.catalog.root,...state.catalog.categories.map(c=>c.entries)])for(const ref of refs)if(ref.type==='product'&&ref.id===temporary)ref.id=id;
+          }
+          state.catalog.identity=data.catalog.identity;state.catalog.aliases=data.catalog.aliases;
+        }
+        editingId=data.assignedIds?.[editingId]||editingId;
+        if(editingId)editorURL(editingId);
+        saving=false;render();
+      }
       status(dirty?'Saved submitted changes. Newer edits are still unsaved.':`Saved. Generated ${data.generated.length} file(s).`);return true;
     } catch(error){status(error.message,true);return false}
     finally{saving=false}

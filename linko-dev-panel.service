@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/projects/dev-panel
-ExecStart=/usr/bin/python3 %h/projects/dev-panel/server.py
+WorkingDirectory=%h/projects/linko-dev-panel
+ExecStart=%h/projects/linko-dev-panel/.venv/bin/python %h/projects/linko-dev-panel/server.py
 Environment=PYTHONUNBUFFERED=1
 Environment=LINKO_PANEL_HOST=127.0.0.1
 Environment=LINKO_PANEL_PORT=8765
