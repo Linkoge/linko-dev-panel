@@ -299,7 +299,9 @@ The standard projects directory is the **parent of the installed Dev Panel direc
 
 Configured entries still load first and keep their display names, paths, remote, preview, screenshot and catalogue settings. The panel then discovers immediate child directories containing a valid `.git` directory or Git worktree `.git` file, verified with `git rev-parse --show-toplevel`. Plain folders, fake `.git` folders, bare repositories, hidden directories, symlinked project directories and unfinished panel clones are excluded. Discovery does not recurse, fetch, pull, stage, reset, run generators or change repository files. Discovered projects use their directory name, `origin`, and no website/catalogue configuration. If a name conflicts with a different configured project, a deterministic ` (local)` suffix distinguishes it. Repositories already configured by path appear only once.
 
-Discovery runs at startup and whenever the browser requests the project list, including Add Project checks and clone completion. Repositories cloned by the panel become selectable automatically without a restart or configuration edit. To see a repository added outside the panel, reload the page. Installing this phase requires one panel restart to load the changed Python backend; subsequent clones require none. Settings-file and environment changes still require a restart. `"projects": {}` supports a fresh installation with no configured repositories; configured paths that are supplied must still be valid.
+Discovery runs at startup and whenever the browser requests the project list, including Add Project checks and clone completion. Repositories cloned by the panel become selectable automatically without a restart or configuration edit. To see a repository added outside the panel, reload the page. Installing this phase requires one panel restart to load the changed Python backend; subsequent clones require none. Projects-directory and environment changes still require a restart. `"projects": {}` supports a fresh installation with no configured repositories.
+
+A missing or invalid configured project no longer stops the panel. Available projects still load; **Unavailable projects** lists each skipped project and its error, also recorded in the service log. This covers missing/inaccessible repositories, invalid project settings, and missing preview or catalogue files. Even when every configured project is unavailable, the panel stays online and **+ Add Project** remains usable. Reload rechecks configured projects, so repairing a folder or project entry restores it without restarting. Invalid configured repositories are excluded from automatic discovery until repaired, preserving their configured metadata and validation requirements. An unreadable/malformed configuration file or invalid projects directory still needs correction before startup.
 
 1. Create a repository at your Git provider.
 2. In Dev Panel, click **+ Add Project** beside the repository selector and paste its URL.
@@ -330,6 +332,7 @@ Phase 2 checks use disposable repositories and no remote repository writes:
 ```bash
 python3 -m unittest discover -s tests -p test_onboarding.py -v
 PANEL_TEST_PYTHON=.venv/bin/python node tests/test_onboarding_browser.mjs
+PANEL_TEST_PYTHON=.venv/bin/python node tests/test_unavailable_projects_browser.mjs
 PANEL_TEST_PYTHON=.venv/bin/python node tests/test_terminal_browser.mjs
 ```
 

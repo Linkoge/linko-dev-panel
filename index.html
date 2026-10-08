@@ -98,6 +98,11 @@
 <main>
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
   <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select><button id="addProject" style="margin-top:10px">+ Add Project</button><p id="emptyProjects" class="muted hidden">No projects yet. Add a repository to start working.</p></section>
+  <section class="card hidden" id="projectWarnings" role="status">
+    <h2 class="warning">Unavailable projects</h2>
+    <p class="muted">The panel is running. Fix these projects, then reload to check again.</p>
+    <ul class="files" id="projectErrors"></ul>
+  </section>
   <nav class="view-tabs" aria-label="Panel sections"><button id="repositoryTab" class="active" aria-current="page">Repository</button><button id="screenshotsTab">Screenshots</button><button id="productsTab" class="hidden">Products</button></nav>
   <a class="button" id="openTerminal" target="_blank" rel="noopener">OPEN TERMINAL</a>
   <div id="repositoryView">
@@ -537,6 +542,15 @@
       const data = await api('/api/projects');
       csrf = data.csrfToken;
       $('version').textContent = `v${data.version}`;
+      const projectErrors = data.projectErrors || [];
+      $('projectWarnings').classList.toggle('hidden', !projectErrors.length);
+      $('projectErrors').replaceChildren();
+      for (const item of projectErrors) {
+        const row = document.createElement('li');
+        const name = document.createElement('strong'); name.textContent = item.name;
+        const error = document.createElement('small'); error.textContent = item.error;
+        row.append(name, error); $('projectErrors').append(row);
+      }
       $('project').replaceChildren();
       capturePagesByProject = {};
       catalogueByProject = {};
@@ -547,6 +561,9 @@
         catalogueByProject[item.name] = Boolean(item.catalogue);
       }
       const empty = data.projects.length === 0;
+      $('emptyProjects').textContent = projectErrors.length
+        ? 'No available projects. Fix the errors below or add another repository.'
+        : 'No projects yet. Add a repository to start working.';
       $('emptyProjects').classList.toggle('hidden', !empty);
       $('project').disabled = empty;
       document.querySelector('.view-tabs').classList.toggle('hidden', empty);

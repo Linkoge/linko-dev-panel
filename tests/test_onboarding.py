@@ -304,3 +304,97 @@ class OnboardingHTTPTests(test_panel.PanelTests):
         for route in ("status", "history", "diff", "terminal/status"):
             self.assertEqual(200, self.request("GET", "/api/" + route + "?project=new-empty")[0])
         self.assertEqual(path, terminal_backend.directory(server.PROJECTS["new-empty"]))
+
+
+class UnavailableProjectTests(unittest.TestCase):
+    request = test_panel.PanelTests.request
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="panel-unavailable-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.projects = self.root / "projects"
+        self.projects.mkdir()
+        self.good = self.projects / "good"
+        git(self.projects, "init", "-b", "main", str(self.good))
+        (self.good / "page.html").write_text("preview")
+        self.config = self.root / "projects.json"
+        for name in ("PROJECTS", "PROJECT_REGISTRY", "CLONES"):
+            self.addCleanup(setattr, server, name, getattr(server, name))
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        for key in ("LINKO_REPO_PATH", "LINKO_PROJECTS_DIR"):
+            os.environ.pop(key, None)
+
+    def configure(self, entries):
+        self.config.write_text(json.dumps({"projectsDirectory": str(self.projects), "projects": entries}))
+        with self.assertLogs("project_onboarding", level="WARNING"):
+            server.initialize_projects(self.config)
+        self.addCleanup(server.CLONES.shutdown)
+
+    def test_missing_and_invalid_entries_do_not_prevent_valid_project_routes(self):
+        self.configure({
+            "Missing": {"path": str(self.projects / "missing")},
+            "Bad settings": [],
+            "Good": {"path": str(self.good), "preview": "page.html"},
+        })
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual(["Good"], [p["name"] for p in data["projects"]])
+        self.assertEqual(["Missing", "Bad settings"], [p["name"] for p in data["projectErrors"]])
+        self.assertIn("directory does not exist", data["projectErrors"][0]["error"])
+        self.assertEqual(200, self.request("GET", "/api/status?project=Good")[0])
+        self.assertEqual(200, self.request("GET", "/site/Good/preview/page.html")[0])
+        self.assertEqual(400, self.request("GET", "/api/status?project=Missing")[0])
+        self.assertEqual(400, self.request("POST", "/api/push", {"project": "Missing"})[0])
+        with self.assertRaises(ValueError):
+            load_projects(self.config)  # Strict validation remains available to tooling.
+
+    def test_invalid_metadata_cannot_be_bypassed_by_discovery_and_recovers(self):
+        self.configure({"Configured name": {"path": str(self.good), "preview": "missing.html"}})
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual([], data["projects"])
+        self.assertIn("capture page does not exist", data["projectErrors"][0]["error"])
+        self.assertEqual(400, self.request("GET", "/api/status?project=good")[0])
+        (self.good / "missing.html").write_text("restored")
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual([], data["projectErrors"])
+        self.assertEqual(["Configured name"], [p["name"] for p in data["projects"]])
+        self.assertIn("missing.html", data["projects"][0]["previewUrl"])
+
+    def test_repository_disappears_and_recovers_without_restart(self):
+        self.configure({
+            "Good": {"path": str(self.good)},
+            "Missing": {"path": str(self.projects / "missing")},
+        })
+        moved = self.root / "temporarily-moved"
+        self.good.rename(moved)
+        with self.assertLogs("project_onboarding", level="WARNING"):
+            status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual([], data["projects"])
+        self.assertEqual({"Good", "Missing"}, {p["name"] for p in data["projectErrors"]})
+        moved.rename(self.good)
+        git(self.projects, "init", "-b", "main", str(self.projects / "missing"))
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual([], data["projectErrors"])
+        self.assertEqual(["Good", "Missing"], [p["name"] for p in data["projects"]])
+
+    def test_missing_catalogue_and_git_metadata_are_isolated(self):
+        broken = self.projects / "broken"
+        broken.mkdir()
+        self.configure({
+            "No catalogue": {"path": str(self.good), "catalogue": True},
+            "Not Git": {"path": str(broken)},
+        })
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        self.assertEqual([], data["projects"])
+        self.assertIn("missing catalogue.py", data["projectErrors"][0]["error"])
+        self.assertIn("Git working tree", data["projectErrors"][1]["error"])
+        self.assertEqual(200, self.request("GET", "/")[0])
+        self.assertEqual(200, self.request("POST", "/api/projects/preview", {"url": "git@host:team/new.git"})[0])

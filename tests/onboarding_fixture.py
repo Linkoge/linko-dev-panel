@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix="panel-onboarding-browser-") as temp:
     os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
     config = root / "projects.json"
     configured = {} if empty_start else {"Existing": {"path":str(existing), "remote":None}}
+    if os.environ.get("PANEL_TEST_MISSING_PROJECTS") == "1":
+        configured["Missing <script>"] = {"path": str(projects / "missing")}
     config.write_text(json.dumps({"projectsDirectory":str(projects), "projects":configured}))
     server.initialize_projects(config)
     server.HOST = "127.0.0.1"

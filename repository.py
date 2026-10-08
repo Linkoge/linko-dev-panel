@@ -308,7 +308,13 @@ def snapshot(*values: str) -> str:
     return hashlib.sha256("\0".join(values).encode("utf-8", "surrogateescape")).hexdigest()
 
 
-def load_projects(config_path: Path) -> dict[str, Project]:
+def load_projects(config_path: Path, *, errors: list[dict[str, str]] | None = None,
+                  configured_paths: set[Path] | None = None) -> dict[str, Project]:
+    """Validate projects independently when an error collector is supplied.
+
+    Configuration-file errors remain fatal. Reserve configured paths, including
+    invalid projects, so discovery cannot bypass their failed validation.
+    """
     config_path = config_path.resolve()
     try:
         data = json.loads(config_path.read_text(encoding="utf-8-sig"))
@@ -319,56 +325,68 @@ def load_projects(config_path: Path) -> dict[str, Project]:
         raise ValueError("projects.json must contain a projects object.")
     projects = {}
     for name, value in entries.items():
-        if not isinstance(name, str) or not name or not isinstance(value, dict):
-            raise ValueError("Each project needs a name and settings object.")
-        raw_path = os.environ.get("LINKO_REPO_PATH", value.get("path")) if name == "Linko" else value.get("path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            raise ValueError(f"{name}: set a repository path in {config_path} or LINKO_REPO_PATH for Linko.")
-        path = Path(raw_path).expanduser()
-        if not path.is_absolute():
-            path = config_path.parent / path
         try:
-            path = path.resolve(strict=True)
-        except OSError as exc:
-            raise ValueError(f"{name}: repository directory does not exist or is inaccessible: {path}. Check {config_path} and LINKO_REPO_PATH.") from exc
-        if not path.is_dir():
-            raise ValueError(f"{name}: repository path is not a directory: {path}")
-        remote = value.get("remote", "origin")
-        preview = value.get("preview")
-        if remote is not None and (not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", remote)):
-            raise ValueError(f"{name}: invalid remote name.")
-        def valid_page(page: object) -> bool:
-            try:
-                return isinstance(page, str) and web_path(page).suffix.lower() == ".html"
-            except ValueError:
-                return False
-        if preview is not None and not valid_page(preview):
-            raise ValueError(f"{name}: preview must be a visible relative HTML path.")
-        extra_pages = value.get("capturePages", [])
-        if not isinstance(extra_pages, list) or any(not valid_page(page) for page in extra_pages):
-            raise ValueError(f"{name}: capturePages must contain visible relative HTML paths.")
-        if extra_pages and not preview:
-            raise ValueError(f"{name}: capturePages requires a preview entry.")
-        pages = tuple(dict.fromkeys(([preview] if preview else []) + extra_pages))
-        for page in pages:
-            candidate = (path / page).resolve()
-            if not candidate.is_relative_to(path) or not candidate.is_file():
-                raise ValueError(f"{name}: capture page does not exist inside the project: {page}")
-        catalogue = value.get("catalogue", False)
-        if not isinstance(catalogue, bool):
-            raise ValueError(f"{name}: catalogue must be true or false.")
-        if catalogue:
-            for relative in ("catalogue.py", "data/catalog.json", "templates/products.html", "data/products"):
-                candidate = (path / relative).resolve()
-                exists = candidate.is_dir() if relative == "data/products" else candidate.is_file()
-                if not candidate.is_relative_to(path) or not exists:
-                    raise ValueError(f"{name}: expected a Linko catalogue repository; missing {relative} inside {path}.")
-        project = Project(name, path, remote, preview, pages, catalogue)
-        try:
-            top = project.run("rev-parse", "--show-toplevel").strip()
-        except GitError as exc:
-            raise ValueError(f"{name}: cannot identify {path} as a Git working tree: {exc.output}") from exc
-        if Path(top).resolve() != path:
-            raise ValueError(f"{name}: path must be a Git repository root.")
-        projects[name] = project
+            projects[name] = _load_project(config_path, name, value, configured_paths)
+        except (ValueError, OSError, RuntimeError) as exc:
+            if errors is None:
+                raise
+            errors.append({"name": name, "error": str(exc)})
     return projects
+
+
+def _load_project(config_path: Path, name: str, value: object,
+                  configured_paths: set[Path] | None) -> Project:
+    if not isinstance(name, str) or not name or not isinstance(value, dict):
+        raise ValueError("Each project needs a name and settings object.")
+    raw_path = os.environ.get("LINKO_REPO_PATH", value.get("path")) if name == "Linko" else value.get("path")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError(f"{name}: set a repository path in {config_path} or LINKO_REPO_PATH for Linko.")
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = config_path.parent / path
+    if configured_paths is not None:
+        configured_paths.add(path.resolve())
+    try:
+        path = path.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{name}: repository directory does not exist or is inaccessible: {path}. Check {config_path} and LINKO_REPO_PATH.") from exc
+    if not path.is_dir():
+        raise ValueError(f"{name}: repository path is not a directory: {path}")
+    remote = value.get("remote", "origin")
+    preview = value.get("preview")
+    if remote is not None and (not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", remote)):
+        raise ValueError(f"{name}: invalid remote name.")
+    def valid_page(page: object) -> bool:
+        try:
+            return isinstance(page, str) and web_path(page).suffix.lower() == ".html"
+        except ValueError:
+            return False
+    if preview is not None and not valid_page(preview):
+        raise ValueError(f"{name}: preview must be a visible relative HTML path.")
+    extra_pages = value.get("capturePages", [])
+    if not isinstance(extra_pages, list) or any(not valid_page(page) for page in extra_pages):
+        raise ValueError(f"{name}: capturePages must contain visible relative HTML paths.")
+    if extra_pages and not preview:
+        raise ValueError(f"{name}: capturePages requires a preview entry.")
+    pages = tuple(dict.fromkeys(([preview] if preview else []) + extra_pages))
+    for page in pages:
+        candidate = (path / page).resolve()
+        if not candidate.is_relative_to(path) or not candidate.is_file():
+            raise ValueError(f"{name}: capture page does not exist inside the project: {page}")
+    catalogue = value.get("catalogue", False)
+    if not isinstance(catalogue, bool):
+        raise ValueError(f"{name}: catalogue must be true or false.")
+    if catalogue:
+        for relative in ("catalogue.py", "data/catalog.json", "templates/products.html", "data/products"):
+            candidate = (path / relative).resolve()
+            exists = candidate.is_dir() if relative == "data/products" else candidate.is_file()
+            if not candidate.is_relative_to(path) or not exists:
+                raise ValueError(f"{name}: expected a Linko catalogue repository; missing {relative} inside {path}.")
+    project = Project(name, path, remote, preview, pages, catalogue)
+    try:
+        top = project.run("rev-parse", "--show-toplevel").strip()
+    except GitError as exc:
+        raise ValueError(f"{name}: cannot identify {path} as a Git working tree: {exc.output}") from exc
+    if Path(top).resolve() != path:
+        raise ValueError(f"{name}: path must be a Git repository root.")
+    return project

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -13,7 +14,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from repository import GitError, Project
+from repository import GitError, Project, load_projects
 
 SEGMENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\Z")
@@ -61,7 +62,12 @@ def repository_url(value: object) -> dict[str, str]:
 
 
 def projects_directory(panel_dir: Path, config: Path) -> Path:
-    data = json.loads(config.read_text(encoding="utf-8-sig"))
+    try:
+        data = json.loads(config.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Unable to read project configuration {config}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("projects.json must contain a projects object.")
     raw = os.environ.get("LINKO_PROJECTS_DIR", data.get("projectsDirectory"))
     if raw is None:
         return panel_dir.resolve().parent
@@ -87,16 +93,27 @@ def git_root(path: Path) -> bool:
 
 
 class ProjectRegistry:
-    def __init__(self, root: Path, configured: dict[str, Project]):
+    def __init__(self, root: Path, configured: dict[str, Project], config_path: Path | None = None):
         self.root = root.resolve(strict=True)
         self.configured = configured.copy()
+        self.config_path = config_path
+        self.project_errors: list[dict[str, str]] = []
         self.lock = threading.Lock()
 
     def refresh(self, excluded=()) -> dict[str, Project]:
         """Configured names/metadata win; only immediate, real Git roots qualify."""
         with self.lock:
+            configured_paths: set[Path] = set()
+            if self.config_path is not None:
+                errors: list[dict[str, str]] = []
+                self.configured = load_projects(self.config_path, errors=errors,
+                                                configured_paths=configured_paths)
+                if errors != self.project_errors:
+                    for item in errors:
+                        logging.getLogger(__name__).warning("Project unavailable (%s): %s", item["name"], item["error"])
+                self.project_errors = errors
             projects = self.configured.copy()
-            paths = {p.path for p in projects.values()}
+            paths = configured_paths | {p.path for p in projects.values()}
             if self.root.resolve(strict=True) != self.root:
                 raise ValueError("The projects directory changed. Check settings and restart the panel.")
             for entry in sorted(self.root.iterdir(), key=lambda p: p.name):

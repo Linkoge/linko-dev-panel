@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from repository import GitError, Project, configuration_path, load_projects, preview_url, snapshot, web_path
+from repository import GitError, Project, configuration_path, preview_url, snapshot, web_path
 import screenshots
 import terminal_backend
 from project_onboarding import CloneManager, ProjectRegistry, projects_directory
@@ -56,8 +56,7 @@ def refresh_projects() -> dict[str, Project]:
 
 def initialize_projects(config: Path) -> None:
     global PROJECT_REGISTRY, CLONES
-    configured = load_projects(config)
-    PROJECT_REGISTRY = ProjectRegistry(projects_directory(PANEL_DIR, config), configured)
+    PROJECT_REGISTRY = ProjectRegistry(projects_directory(PANEL_DIR, config), {}, config)
     CLONES = CloneManager(PROJECT_REGISTRY, refresh_projects)
     refresh_projects()
 
@@ -222,6 +221,7 @@ class Handler(BaseHTTPRequestHandler):
                                 preview_url(p.name, p.preview) if p.preview else None,
                                 "capturePages": list(screenshots.pages(p)), "catalogue": catalogue_backend.enabled(p)}
                                 for p in PROJECTS.values()],
+                                "projectErrors": PROJECT_REGISTRY.project_errors if PROJECT_REGISTRY else [],
                                 "csrfToken": CSRF_TOKEN})
             elif path == "/api/projects/clone-status":
                 if CLONES is None:
