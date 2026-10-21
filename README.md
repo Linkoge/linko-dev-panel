@@ -6,6 +6,7 @@
 
 - Shows the selected repository's branch, changed files, commit history, and local ahead/behind status.
 - Clones SSH/HTTPS repositories through **+ Add Project** and automatically discovers Git projects in the projects directory.
+- **Remove from panel** hides the selected repository while keeping its files, Git history, and terminal sessions. **Removed projects → Restore to panel** brings it back.
 - Reviews and commits all local changes, then lets you push separately. Pull uses `git pull --ff-only`.
 - Shows a tracked diff and lists untracked files. Discard restores only the listed **unstaged tracked** changes after confirmation; staged and untracked files stay.
 - Compares a historical commit with the current branch, including file-by-file diffs. You can restore a historical tree by creating a new commit, or check out a commit temporarily in detached HEAD mode and return to a branch.
@@ -287,6 +288,22 @@ If startup or access fails:
 - **Phone times out while host checks pass:** check the phone's Tailscale connection, tailnet access rules, and host firewall for the configured port.
 
 ## Add Project and discovery (Phase 2)
+
+Select a repository and use **Remove from panel** to hide it after confirmation.
+The panel switches to another available project, or shows the empty state when
+the last project is removed. **Removed projects → Restore to panel** reverses
+the action without cloning. Removing keeps repository files, uncommitted changes,
+Git history, configured previews/catalogue settings and persistent terminal
+sessions. Unsaved browser product edits are discarded only after confirmation.
+Open terminal connections remain running; new project actions are unavailable
+until the project is restored. Hidden repositories stay excluded from automatic
+discovery across reloads and service restarts, identified by their canonical path.
+Visibility is stored atomically in Git-ignored `project-visibility.local.json`
+beside the selected configuration file. The original project configuration is
+retained. If a removed folder is moved or renamed, its new path is a new project.
+Add Project does not overwrite a removed repository's existing folder; use Restore
+to panel to bring it back. Restoring a missing or invalid configured repository
+shows its normal Unavailable projects diagnostic.
 
 The standard projects directory is the **parent of the installed Dev Panel directory**, normally `~/projects` when the panel is in `~/projects/linko-dev-panel`. To override it, set `LINKO_PROJECTS_DIR` or add a top-level `"projectsDirectory"` to the selected settings file. The environment variable takes precedence. Relative paths resolve beside that settings file; `~` expands to the server user's home. The directory must already exist and be writable for cloning. For example:
 

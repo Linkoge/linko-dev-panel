@@ -309,7 +309,8 @@ def snapshot(*values: str) -> str:
 
 
 def load_projects(config_path: Path, *, errors: list[dict[str, str]] | None = None,
-                  configured_paths: set[Path] | None = None) -> dict[str, Project]:
+                  configured_paths: set[Path] | None = None,
+                  excluded_paths: set[Path] = frozenset()) -> dict[str, Project]:
     """Validate projects independently when an error collector is supplied.
 
     Configuration-file errors remain fatal. Reserve configured paths, including
@@ -326,6 +327,8 @@ def load_projects(config_path: Path, *, errors: list[dict[str, str]] | None = No
     projects = {}
     for name, value in entries.items():
         try:
+            if _configured_path(config_path, name, value).resolve() in excluded_paths:
+                continue
             projects[name] = _load_project(config_path, name, value, configured_paths)
         except (ValueError, OSError, RuntimeError) as exc:
             if errors is None:
@@ -334,8 +337,7 @@ def load_projects(config_path: Path, *, errors: list[dict[str, str]] | None = No
     return projects
 
 
-def _load_project(config_path: Path, name: str, value: object,
-                  configured_paths: set[Path] | None) -> Project:
+def _configured_path(config_path: Path, name: str, value: object) -> Path:
     if not isinstance(name, str) or not name or not isinstance(value, dict):
         raise ValueError("Each project needs a name and settings object.")
     raw_path = os.environ.get("LINKO_REPO_PATH", value.get("path")) if name == "Linko" else value.get("path")
@@ -344,6 +346,12 @@ def _load_project(config_path: Path, name: str, value: object,
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = config_path.parent / path
+    return path
+
+
+def _load_project(config_path: Path, name: str, value: object,
+                  configured_paths: set[Path] | None) -> Project:
+    path = _configured_path(config_path, name, value)
     if configured_paths is not None:
         configured_paths.add(path.resolve())
     try:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import tempfile
 import time
 from urllib.parse import urlsplit
 
@@ -97,8 +99,66 @@ class ProjectRegistry:
         self.root = root.resolve(strict=True)
         self.configured = configured.copy()
         self.config_path = config_path
+        self.visibility_path = (config_path.parent if config_path else self.root) / "project-visibility.local.json"
+        self.hidden = self._load_hidden()
         self.project_errors: list[dict[str, str]] = []
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+
+    def _load_hidden(self) -> dict[Path, str]:
+        try:
+            data = json.loads(self.visibility_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Unable to read project visibility settings: {exc}") from exc
+        entries = data.get("hiddenProjects") if isinstance(data, dict) else None
+        if (not isinstance(entries, list) or any(
+                not isinstance(item, dict) or not isinstance(item.get("name"), str)
+                or not isinstance(item.get("path"), str) or not Path(item["path"]).is_absolute()
+                for item in entries)):
+            raise ValueError("Project visibility settings must contain hiddenProjects with names and absolute paths.")
+        return {Path(item["path"]): item["name"] for item in entries}
+
+    @staticmethod
+    def hidden_id(path: Path) -> str:
+        return hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+
+    def hidden_projects(self) -> list[dict[str, str]]:
+        with self.lock:
+            return [{"id": self.hidden_id(path), "name": name} for path, name in self.hidden.items()]
+
+    def _save_hidden(self, hidden: dict[Path, str]) -> None:
+        # Atomic local settings only: repository files and project metadata stay intact.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.visibility_path.parent,
+                                             prefix=".project-visibility-", delete=False) as handle:
+                temporary = Path(handle.name)
+                json.dump({"hiddenProjects": [{"path": str(path), "name": name}
+                                               for path, name in hidden.items()]}, handle, indent=2)
+                handle.write("\n")
+            os.replace(temporary, self.visibility_path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        self.hidden = hidden
+
+    def hide(self, name: object, excluded=()) -> None:
+        with self.lock:
+            projects = self.refresh(excluded)
+            if not isinstance(name, str) or name not in projects:
+                raise ValueError("Unknown project. Select an available repository.")
+            project = projects[name]
+            self._save_hidden({**self.hidden, project.path: project.name})
+
+    def restore(self, identity: object) -> str:
+        with self.lock:
+            path = next((path for path in self.hidden if self.hidden_id(path) == identity), None)
+            if path is None:
+                raise ValueError("Hidden project not found. Reload the panel and try again.")
+            name = self.hidden[path]
+            self._save_hidden({p: n for p, n in self.hidden.items() if p != path})
+            return name
 
     def refresh(self, excluded=()) -> dict[str, Project]:
         """Configured names/metadata win; only immediate, real Git roots qualify."""
@@ -107,12 +167,13 @@ class ProjectRegistry:
             if self.config_path is not None:
                 errors: list[dict[str, str]] = []
                 self.configured = load_projects(self.config_path, errors=errors,
-                                                configured_paths=configured_paths)
+                                                configured_paths=configured_paths,
+                                                excluded_paths=set(self.hidden))
                 if errors != self.project_errors:
                     for item in errors:
                         logging.getLogger(__name__).warning("Project unavailable (%s): %s", item["name"], item["error"])
                 self.project_errors = errors
-            projects = self.configured.copy()
+            projects = {name: p for name, p in self.configured.items() if p.path not in self.hidden}
             paths = configured_paths | {p.path for p in projects.values()}
             if self.root.resolve(strict=True) != self.root:
                 raise ValueError("The projects directory changed. Check settings and restart the panel.")
@@ -120,7 +181,7 @@ class ProjectRegistry:
                 if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
                     continue
                 path = entry.resolve()
-                if (path in paths or path in excluded or not path.is_relative_to(self.root)
+                if (path in paths or path in excluded or path in self.hidden or not path.is_relative_to(self.root)
                         or not git_root(path)):
                     continue
                 name = entry.name

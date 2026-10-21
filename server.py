@@ -222,6 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "capturePages": list(screenshots.pages(p)), "catalogue": catalogue_backend.enabled(p)}
                                 for p in PROJECTS.values()],
                                 "projectErrors": PROJECT_REGISTRY.project_errors if PROJECT_REGISTRY else [],
+                                "hiddenProjects": PROJECT_REGISTRY.hidden_projects() if PROJECT_REGISTRY else [],
                                 "csrfToken": CSRF_TOKEN})
             elif path == "/api/projects/clone-status":
                 if CLONES is None:
@@ -296,6 +297,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             path = urlsplit(self.path).path
             body = self.read_json(11_000_000 if path == '/api/catalogue/upload' else 2_000_000 if path == '/api/catalogue/save' else MAX_BODY)
+            if path in {"/api/projects/hide", "/api/projects/restore"}:
+                if PROJECT_REGISTRY is None or CLONES is None:
+                    raise ValueError("Project management is unavailable.")
+                with OPERATION_LOCK:
+                    if path == "/api/projects/hide":
+                        PROJECT_REGISTRY.hide(body.get("project"), CLONES.excluded())
+                        restored = None
+                    else:
+                        restored = PROJECT_REGISTRY.restore(body.get("id"))
+                    refresh_projects()
+                self.send_json({"ok": True, "project": restored})
+                return
             if path in {"/api/projects/preview", "/api/projects/clone", "/api/projects/cancel"}:
                 if CLONES is None or PROJECT_REGISTRY is None:
                     raise ValueError("Project onboarding is unavailable.")

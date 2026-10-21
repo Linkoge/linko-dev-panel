@@ -97,7 +97,17 @@
 <body>
 <main>
   <header><h1>DEV PANEL <small class="muted" id="version"></small></h1><span class="online" id="online">● Connecting</span></header>
-  <section class="card"><label for="project">Repository</label><select id="project" aria-label="Repository"></select><button id="addProject" style="margin-top:10px">+ Add Project</button><p id="emptyProjects" class="muted hidden">No projects yet. Add a repository to start working.</p></section>
+  <section class="card">
+    <label for="project">Repository</label><select id="project" aria-label="Repository"></select>
+    <div class="grid"><button id="addProject">+ Add Project</button><button id="removeProject">Remove from panel</button></div>
+    <p id="projectManagementStatus" class="muted" role="status"></p>
+    <p id="emptyProjects" class="muted hidden">No projects yet. Add a repository to start working.</p>
+    <details id="hiddenProjectsSection" class="repository-details hidden">
+      <summary>Removed projects</summary>
+      <p class="muted">Files are kept. Restore a project to show it in the panel again.</p>
+      <ul id="hiddenProjects" class="files"></ul>
+    </details>
+  </section>
   <section class="card hidden" id="projectWarnings" role="status">
     <h2 class="warning">Unavailable projects</h2>
     <p class="muted">The panel is running. Fix these projects, then reload to check again.</p>
@@ -566,12 +576,51 @@
         : 'No projects yet. Add a repository to start working.';
       $('emptyProjects').classList.toggle('hidden', !empty);
       $('project').disabled = empty;
+      $('removeProject').disabled = empty;
+      const hiddenProjects = data.hiddenProjects || [];
+      $('hiddenProjectsSection').classList.toggle('hidden', !hiddenProjects.length);
+      $('hiddenProjects').replaceChildren();
+      for (const item of hiddenProjects) {
+        const row = document.createElement('li');
+        const name = document.createElement('strong'); name.textContent = item.name;
+        const restore = document.createElement('button'); restore.textContent = 'Restore to panel';
+        restore.onclick = () => changeProjectVisibility('restore', item.id, item.name);
+        row.append(name, restore); $('hiddenProjects').append(row);
+      }
       document.querySelector('.view-tabs').classList.toggle('hidden', empty);
       $('repositoryView').classList.toggle('hidden', empty || !$('screenshotsView').classList.contains('hidden') || !$('productsView').classList.contains('hidden'));
       $('openTerminal').classList.toggle('hidden', empty);
       if (data.projects.some(p => p.name === selectedProject)) $('project').value = selectedProject;
       return data;
   }
+
+  async function changeProjectVisibility(action, identity, name) {
+    const dirty = Boolean(window.catalogueEditor?.dirty());
+    if (action === 'hide') {
+      const explanation = document.createElement('p');
+      explanation.textContent = `Remove ${name} from the panel? Its files, Git history and terminal sessions will be kept. You can restore it under Removed projects.${dirty ? ' Unsaved product editor changes will be discarded.' : ''}`;
+      if (!await confirmDialog('Remove from panel?', [explanation], 'REMOVE FROM PANEL')) return;
+    } else if (dirty && !window.confirm('Discard unsaved product changes and restore this project?')) return;
+    setBusy(true);
+    $('projectManagementStatus').textContent = '';
+    try {
+      await api(`/api/projects/${action}`, {method:'POST', body:action === 'hide' ? {project:identity} : {id:identity}});
+      window.catalogueEditor?.discard();
+      const url = new URL(location.href);
+      url.searchParams.delete('product');
+      if (action === 'restore') url.searchParams.set('project', name);
+      else {
+        url.searchParams.delete('project');
+        localStorage.removeItem('devPanelProject');
+      }
+      location.replace(url.href);
+    } catch (error) {
+      $('projectManagementStatus').textContent = error.message;
+      setBusy(false);
+      $('removeProject').disabled = !$('project').options.length;
+    }
+  }
+  $('removeProject').onclick = () => changeProjectVisibility('hide', selectedProject, selectedProject);
 
   async function start() {
     try {
