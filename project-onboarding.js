@@ -9,7 +9,8 @@
 
   function controls() {
     $('repositoryUrl').disabled = busy;
-    $('cloneProject').disabled = busy || !preview || preview.exists;
+    $('cloneProject').textContent = preview?.exists ? 'Replace local copy with GitHub version' : 'Clone Project';
+    $('cloneProject').disabled = busy || !preview || (preview.exists && !preview.canReplace);
     $('cancelClone').classList.toggle('hidden', !busy || !jobId);
     $('openExistingProject').classList.toggle('hidden', busy || !preview?.existingProject);
   }
@@ -32,7 +33,7 @@
       if (current !== generation || busy) return;
       renderPreview(data);
       $('cloneStatus').textContent = data.exists
-        ? 'The local project already exists. No files will be changed.'
+        ? (data.canReplace ? 'The local project already exists. You can open it or replace it with the GitHub version after confirming a backup.' : 'The local project already exists. This destination cannot be replaced; open it if available.')
         : 'Ready to clone. Git uses the server user’s existing authentication.';
     } catch (error) {
       if (current === generation && !busy) $('cloneStatus').textContent = error.message;
@@ -63,11 +64,11 @@
         jobId = null;
         sessionStorage.removeItem('devPanelCloneJob');
         if (job.state === 'complete') {
-          $('cloneStatus').textContent = 'Project cloned successfully.';
+          $('cloneStatus').textContent = job.backup ? `Project replaced successfully. Original folder backed up at ${job.backup}` : 'Project cloned successfully.';
           renderPreview({...preview, exists:true, existingProject:job.project});
           $('openExistingProject').textContent = 'Open project';
           await loadProjects();
-          if ($('addProjectDialog').open) await selectProject(job.project);
+          if ($('addProjectDialog').open && !job.backup) await selectProject(job.project);
         } else {
           $('cloneStatus').textContent = job.error;
           // Revalidate before allowing a retry; a preserved directory stays blocked.
@@ -109,7 +110,9 @@
     catch (error) { $('cloneStatus').textContent = error.message; }
   };
   $('cloneProject').onclick = async () => {
-    if (busy || !preview || preview.exists) return;
+    if (busy || !preview || (preview.exists && !preview.canReplace)) return;
+    const replace = Boolean(preview.exists);
+    if (replace && !confirm(`Replace local copy with GitHub version? The current folder (${preview.localPath}) will be moved to a backup inside the projects directory under .backups. Local commits and uncommitted files will remain in the backup. If cloning fails, the original folder will be restored.`)) return;
     busy = true;
     ++generation;
     controls();
@@ -117,7 +120,7 @@
     $('cloneOutput').classList.add('hidden');
     $('cloneStatus').textContent = 'Starting clone…';
     try {
-      const job = await api('/api/projects/clone', {method:'POST', body:{url:$('repositoryUrl').value.trim()}});
+      const job = await api('/api/projects/clone', {method:'POST', body:{url:$('repositoryUrl').value.trim(), replace}});
       jobId = job.id;
       sessionStorage.setItem('devPanelCloneJob', jobId);
       controls();

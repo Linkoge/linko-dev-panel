@@ -50,3 +50,11 @@ Keep the runbook and service template consistent when changing setup requirement
   push destination. Report pending local commits and authentication failures
   accurately. Setup and diagnosis use dry runs; publishing requires the user's
   instruction to push.
+
+## Known pitfalls
+
+### Integration fixtures need the sibling Linko checkout (2026-10-21, task fcbd1c)
+When: Running the full Python suite from an isolated assignment worktree.
+Symptom: Routing workflow tests fail with missing sibling Linko/catalogue.py before exercising the panel.
+Cause: `tests/routing_fixture.py` reads a real Linko checkout beside the panel; its assets are not repository fixtures.
+Do: Provision that sibling checkout in the test environment before full-suite validation; onboarding and panel tests use disposable repositories.
