@@ -406,6 +406,53 @@ class UnavailableProjectTests(unittest.TestCase):
             server.initialize_projects(self.config)
         self.addCleanup(server.CLONES.shutdown)
 
+    def configure_valid(self, entries):
+        self.config.write_text(json.dumps({"projectsDirectory": str(self.projects), "projects": entries}))
+        server.initialize_projects(self.config)
+        self.addCleanup(server.CLONES.shutdown)
+
+    def test_discovered_preview_order_api_and_symlink_safety(self):
+        def repo(name, files=()):
+            path = self.projects / name
+            git(self.projects, "init", "-b", "main", str(path))
+            for relative in files:
+                target = path / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("preview")
+            return path
+
+        root = repo("root", ("index.html", "public/index.html", "docs/index.html"))
+        public = repo("public", ("public/index.html", "docs/index.html"))
+        docs = repo("docs", ("docs/index.html",))
+        none = repo("none")
+        escape = repo("escape")
+        outside = self.root / "outside.html"
+        outside.write_text("outside")
+        (escape / "index.html").symlink_to(outside)
+
+        self.configure_valid({})
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        found = {project["name"]: project for project in data["projects"]}
+        self.assertEqual("index.html", server.PROJECTS["root"].preview)
+        self.assertEqual("public/index.html", server.PROJECTS["public"].preview)
+        self.assertEqual("docs/index.html", server.PROJECTS["docs"].preview)
+        self.assertIsNone(server.PROJECTS["none"].preview)
+        self.assertIsNone(server.PROJECTS["escape"].preview)
+        self.assertIn("previewUrl", found["root"])
+        self.assertIn("previewUrl", found["public"])
+        self.assertIsNone(found["none"]["previewUrl"])
+        self.assertEqual(["index.html"], found["root"]["capturePages"])
+        self.assertEqual(["public/index.html"], found["public"]["capturePages"])
+
+    def test_configured_preview_is_not_replaced_by_discovery_detection(self):
+        (self.good / "index.html").write_text("conventional")
+        self.configure_valid({"Configured": {"path": str(self.good), "preview": "page.html"}})
+        status, data = self.request("GET", "/api/projects")
+        self.assertEqual(200, status)
+        configured = next(p for p in data["projects"] if p["name"] == "Configured")
+        self.assertEqual("/site/Configured/preview/page.html", configured["previewUrl"])
+
     def test_missing_and_invalid_entries_do_not_prevent_valid_project_routes(self):
         self.configure({
             "Missing": {"path": str(self.projects / "missing")},

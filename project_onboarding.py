@@ -10,18 +10,46 @@ import re
 import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import threading
 import tempfile
 import time
 from urllib.parse import urlsplit
 
-from repository import GitError, Project, load_projects
+from repository import GitError, Project, load_projects, web_path
 
 SEGMENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\Z")
 USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
 CLONE_TIMEOUT = 300
+
+
+def _discovered_preview(path: Path) -> str | None:
+    """Pick a conventional visible entry page without following repository symlinks."""
+    for candidate in ("index.html", "public/index.html", "docs/index.html"):
+        try:
+            relative = web_path(candidate)
+            current = path
+            safe = True
+            parts = relative.parts
+            for index, part in enumerate(parts):
+                current = current / part
+                info = current.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    safe = False
+                    break
+                if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
+                    safe = False
+                    break
+                if index == len(parts) - 1 and not stat.S_ISREG(info.st_mode):
+                    safe = False
+                    break
+            if safe:
+                return relative.as_posix()
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 def repository_url(value: object) -> dict[str, str]:
@@ -190,7 +218,9 @@ class ProjectRegistry:
                     name += " (local)"
                 while name in projects:
                     name += " (local)"
-                projects[name] = Project(name, path, "origin", None)
+                preview = _discovered_preview(path)
+                projects[name] = Project(name, path, "origin", preview,
+                                          (preview,) if preview else ())
                 paths.add(path)
             return projects
 
