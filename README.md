@@ -287,6 +287,22 @@ If startup or access fails:
 - **HTTP 403 / Host is not allowed:** add the hostname used in the browser to `LINKO_PANEL_ALLOWED_HOSTS` and restart.
 - **Phone times out while host checks pass:** check the phone's Tailscale connection, tailnet access rules, and host firewall for the configured port.
 
+## Automatic deployment
+
+The repository's `.linko-deploy.json` connects merge-time deployment to the
+checked-in scripts. This project runs as the `linko-dev-panel.service` systemd
+user unit; it has no separate release directory. `backup.sh` saves the last
+deployed Git revision (on first deployment, the current commit's first parent)
+under `${XDG_STATE_HOME:-~/.local/state}/linko-dev-panel/deploy`. `deploy.sh`
+restarts the user unit and records the new revision. `health.sh` checks
+`http://127.0.0.1:8765/`; set `LINKO_DEPLOY_HEALTH_URL` if the service uses a
+different local endpoint. If health fails, `rollback.sh` resets the checkout to
+the saved revision and restarts the unit. This checkout must be clean for a
+rollback because Git's hard reset removes tracked local edits. The scripts
+accept `LINKO_DEPLOY_ROOT`, `LINKO_DEPLOY_STATE_DIR`, `LINKO_DEPLOY_UNIT`,
+`SYSTEMCTL`, and `CURL` overrides for installations and disposable tests; no
+credentials are needed or stored.
+
 ## Add Project and discovery (Phase 2)
 
 Select a repository and use **Remove from panel** to hide it after confirmation.
