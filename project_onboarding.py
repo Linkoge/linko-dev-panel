@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import hashlib
 import logging
 import os
@@ -201,7 +202,8 @@ class ProjectRegistry:
                     for item in errors:
                         logging.getLogger(__name__).warning("Project unavailable (%s): %s", item["name"], item["error"])
                 self.project_errors = errors
-            projects = {name: p for name, p in self.configured.items() if p.path not in self.hidden}
+            projects = {name: p for name, p in self.configured.items()
+                        if p.path not in self.hidden and p.path not in excluded}
             paths = configured_paths | {p.path for p in projects.values()}
             if self.root.resolve(strict=True) != self.root:
                 raise ValueError("The projects directory changed. Check settings and restart the panel.")
@@ -266,8 +268,9 @@ def clone_error(output: str) -> str:
 
 
 class CloneManager:
-    def __init__(self, registry: ProjectRegistry, refresh):
+    def __init__(self, registry: ProjectRegistry, refresh, panel_dir: Path | None = None):
         self.registry, self.refresh = registry, refresh
+        self.panel_dir = (panel_dir or Path(__file__).parent).resolve()
         self.lock = threading.Lock()
         self.jobs = {}
         self.stopping = False
@@ -285,28 +288,60 @@ class CloneManager:
     def preview(self, value):
         with self.lock:
             excluded = {j["destination"] for j in self.jobs.values() if j["state"] == "cloning"}
-            return self.registry.preview(value, excluded)
+            preview = self.registry.preview(value, excluded)
+            path = self.registry.destination(preview["name"])
+            preview["canReplace"] = (preview["exists"] and path.is_dir() and not path.is_symlink()
+                                     and not self.panel_dir.is_relative_to(path)
+                                     and not any(j["destination"] == path and j["state"] in {"cloning", "registering"}
+                                                 for j in self.jobs.values()))
+            return preview
 
-    def start(self, value: object) -> dict:
+    def start(self, value: object, replace: bool = False) -> dict:
         parsed = repository_url(value)
         path = self.registry.destination(parsed["name"])
         with self.lock:
             if self.stopping:
                 raise ValueError("The panel is stopping. Retry after it starts.")
-            if any(j["state"] == "cloning" for j in self.jobs.values()):
+            if any(j["state"] in {"cloning", "registering"} for j in self.jobs.values()):
                 raise ValueError("Another project is being cloned. Wait for it to finish.")
-            # Atomic exclusive creation: never adopt an existing destination.
+            backup = None
+            if replace:
+                if (path.is_symlink() or not path.is_dir()
+                        or self.panel_dir.is_relative_to(path)):
+                    raise ValueError("Cannot replace the panel's own checkout or a destination that is not a real project folder.")
+                backups = self.registry.root / ".backups"
+                if backups.is_symlink():
+                    raise ValueError("The backup directory must remain inside the projects directory.")
+                backups.mkdir(mode=0o700, exist_ok=True)
+                if backups.resolve() != backups or backups.stat().st_dev != path.stat().st_dev:
+                    raise ValueError("The backup must be inside the projects directory on the same filesystem.")
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+                backup = backups / (parsed["name"] + "-" + stamp + "-" + secrets.token_hex(4))
+                path.rename(backup)
+            # Atomically reserve a fresh directory; never adopt user files.
             try:
                 path.mkdir(mode=0o700)
             except FileExistsError:
+                if backup is not None:
+                    raise ValueError(f"The destination changed before cloning. Original folder preserved at {backup}; inspect the destination before restoring it.") from None
                 raise ValueError("The local project already exists. Select it if available; no files were changed.") from None
             except OSError:
-                raise ValueError("Unable to create the local project directory. Check projects-directory permissions and available disk space.") from None
+                recovery = ""
+                if backup is not None:
+                    try:
+                        if os.path.lexists(path):
+                            raise OSError("Destination is occupied")
+                        backup.rename(path)
+                        recovery = " Original folder restored."
+                    except OSError:
+                        recovery = f" Original folder preserved at {backup}; restore it manually after checking the destination."
+                raise ValueError("Unable to create the local project directory. Check projects-directory permissions and available disk space." + recovery) from None
             identity = path.lstat()
             job_id = secrets.token_urlsafe(24)
             job = {"id": job_id, "state": "cloning", "output": "", "error": "", "project": None,
                    "destination": path, "identity": (identity.st_dev, identity.st_ino),
-                   "cancel": threading.Event(), "name": parsed["name"]}
+                   "cancel": threading.Event(), "name": parsed["name"],
+                   "backup": str(backup) if backup else None}
             # Bounded, in-memory status history. No URLs or credentials retained.
             if len(self.jobs) >= 32:
                 self.jobs.pop(next(iter(self.jobs)))
@@ -316,16 +351,16 @@ class CloneManager:
             try:
                 thread.start()
             except RuntimeError:
-                self._cleanup(job)
+                recovery = self._rollback(job)
                 del self.jobs[job_id]
-                raise
+                raise ValueError("Unable to start the clone job." + recovery) from None
         return self.status(job_id)
 
     def status(self, job_id: object) -> dict:
         with self.lock:
             if not isinstance(job_id, str) or job_id not in self.jobs:
                 raise ValueError("Clone job not found. Refresh the project list to check for the repository.")
-            return {key: self.jobs[job_id][key] for key in ("id", "state", "output", "error", "project", "name")}
+            return {key: self.jobs[job_id][key] for key in ("id", "state", "output", "error", "project", "name", "backup")}
 
     def cancel(self, job_id: object):
         with self.lock:
@@ -356,6 +391,19 @@ class CloneManager:
             return " Partial clone removed; you can retry."
         except OSError:
             return " The partial clone could not be removed. Inspect the local directory before retrying."
+
+    def _rollback(self, job) -> str:
+        message = self._cleanup(job)
+        if job["backup"]:
+            backup = Path(job["backup"])
+            try:
+                if os.path.lexists(job["destination"]):
+                    raise OSError("Destination is occupied")
+                backup.rename(job["destination"])
+                return " Original folder restored from backup: " + str(backup) + "."
+            except OSError:
+                return message + " Original folder preserved at " + str(backup) + "; restore it manually after checking the destination."
+        return message
 
     def _append(self, job, value):
         with self.lock:
@@ -432,7 +480,7 @@ class CloneManager:
             if reader is not None:
                 reader.join(timeout=5)
             message = str(exc) if isinstance(exc, ValueError) else "Unable to run Git clone. Check Git installation and projects-directory permissions."
-            cleanup = self._cleanup(job)
+            cleanup = self._rollback(job)
             with self.lock:
                 job.update(state="failed", error=message + cleanup)
         finally:
