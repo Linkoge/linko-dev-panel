@@ -16,7 +16,7 @@ from repository import Project, load_projects
 
 def git(path, *args):
     return subprocess.run(["git", *args], cwd=path, check=True, text=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60).stdout.strip()
 
 
 class PanelTests(unittest.TestCase):
@@ -131,6 +131,43 @@ class PanelTests(unittest.TestCase):
             self.assertEqual("index.html", self.request("GET", "/api/screenshots?project=One&page=index.html")[1]["session"]["page"])
             self.assertEqual((200, b"about.html"), self.request("GET", "/api/screenshots/image?project=One&page=about.html&file=about-mobile-01.png"))
             self.assertEqual(404, self.request("GET", "/api/screenshots/image?project=One&page=index.html&file=about-mobile-01.png")[0])
+
+    def test_pull_sets_missing_upstream_after_fetch_and_fast_forwards(self):
+        git(self.repo, "branch", "--unset-upstream")
+        (self.other / "remote.txt").write_text("new remote work")
+        git(self.other, "add", ".")
+        git(self.other, "commit", "-m", "remote update")
+        git(self.other, "push")
+        self.project.pull()
+        self.assertEqual("origin/main", self.project.upstream())
+        self.assertEqual(self.second.head(), self.project.head())
+        self.assertEqual("new remote work", (self.repo / "remote.txt").read_text())
+
+    def test_pull_diverged_and_unrelated_preserves_local_work(self):
+        for unrelated in (False, True):
+            with self.subTest(unrelated=unrelated):
+                if unrelated:
+                    git(self.repo, "checkout", "--orphan", "unrelated")
+                (self.repo / "local.txt").write_text("local work")
+                git(self.repo, "add", ".")
+                git(self.repo, "commit", "-m", "local only")
+                if unrelated:
+                    git(self.repo, "branch", "--set-upstream-to=origin/main")
+                else:
+                    (self.other / "remote.txt").write_text("remote work")
+                    git(self.other, "add", ".")
+                    git(self.other, "commit", "-m", "remote only")
+                    git(self.other, "push")
+                (self.repo / "unsaved.txt").write_text("keep me")
+                head = self.project.head()
+                before = git(self.repo, "status", "--porcelain")
+                expected = "unrelated histories" if unrelated else "1 local / 1 remote commits"
+                with self.assertRaisesRegex(ValueError, expected) as raised:
+                    self.project.pull()
+                self.assertIn("Replace local copy with GitHub version", str(raised.exception))
+                self.assertEqual(head, self.project.head())
+                self.assertEqual(before, git(self.repo, "status", "--porcelain"))
+                self.assertEqual("keep me", (self.repo / "unsaved.txt").read_text())
 
     def test_commit_push_pull_and_relationship(self):
         (self.repo / "index.html").write_text("updated\n")

@@ -283,10 +283,24 @@ class Project:
 
     def pull(self) -> str:
         branch = self.require_branch()
+        if not self.remote:
+            raise ValueError("No remote is configured for this project.")
+        self.run("fetch", "--", self.remote, timeout=120)
         upstream = self.upstream()
-        if not self.remote or not upstream or not upstream.startswith(f"{self.remote}/"):
+        target = upstream or f"{self.remote}/{branch}"
+        if not target.startswith(f"{self.remote}/"):
             raise ValueError("No upstream on the configured remote is set for this branch.")
-        return self.run("pull", "--ff-only", self.remote, upstream[len(self.remote) + 1:], timeout=120).strip()
+        ref = f"refs/remotes/{target}"
+        if not self.run("rev-parse", "--verify", "--quiet", ref, check=False).strip():
+            raise ValueError("No matching branch exists on the configured remote. Check the branch and remote settings.")
+        local, remote = map(int, self.run("rev-list", "--left-right", "--count", f"HEAD...{ref}").split())
+        if local and remote:
+            related = bool(self.run("merge-base", "HEAD", ref, check=False).strip())
+            detail = f"{local} local / {remote} remote commits" if related else "unrelated histories"
+            raise ValueError(f"Local history differs from GitHub ({detail}). Use Replace local copy with GitHub version to take GitHub's version; local files will be backed up.")
+        if not upstream:
+            self.run("branch", f"--set-upstream-to={target}", "--", branch)
+        return self.run("merge", "--ff-only", "--", ref, timeout=120).strip()
 
     def restore_version(self, commit: str) -> str:
         """Create a new commit with the target tree, preserving prior history."""

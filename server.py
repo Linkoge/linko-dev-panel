@@ -305,10 +305,10 @@ class Handler(BaseHTTPRequestHandler):
                     preview = CLONES.preview(body.get("url"))
                     if path == "/api/projects/preview":
                         self.send_json({"ok": True, **preview})
-                    elif preview["exists"]:
+                    elif preview["exists"] and body.get("replace") is not True:
                         self.send_json({"ok": False, "error": "The local project already exists. No files were changed.", **preview}, HTTPStatus.CONFLICT)
                     else:
-                        self.send_json({"ok": True, **CLONES.start(body.get("url"))}, HTTPStatus.ACCEPTED)
+                        self.send_json({"ok": True, **CLONES.start(body.get("url"), replace=body.get("replace") is True)}, HTTPStatus.ACCEPTED)
                 return
             project = project_from(body.get("project"))
             if path == "/api/terminal/connect":

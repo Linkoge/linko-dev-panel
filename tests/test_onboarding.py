@@ -179,6 +179,79 @@ class OnboardingTests(unittest.TestCase):
                 self.manager.start("git@host:team/" + name + ".git")
             self.assertTrue(path.exists())
 
+    def test_replace_unrelated_repository_preserves_backup_and_metadata(self):
+        source = self.root / "source"
+        git(self.root, "init", "-b", "main", str(source))
+        git(source, "config", "user.name", "Test")
+        git(source, "config", "user.email", "test@example.invalid")
+        (source / "page.html").write_text("GitHub version\n")
+        git(source, "add", ".")
+        git(source, "commit", "-m", "remote history")
+        git(source, "push", str(self.remote), "main")
+        git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
+        original = git(self.existing, "rev-parse", "HEAD")
+        config = self.root / "projects.local.json"
+        config.write_text(json.dumps({"projects": {"Custom name": {
+            "path": str(self.existing), "preview": "page.html", "remote": "origin"}}}))
+        self.registry.config_path = config
+        url = "git@host:team/existing.git"
+        self.assertTrue(self.manager.preview(url)["canReplace"])
+        with patch("project_onboarding.subprocess.Popen", side_effect=self.local_transport):
+            result = self.wait_job(self.manager.start(url, replace=True))
+        self.assertEqual("complete", result["state"], result)
+        self.assertEqual(git(source, "rev-parse", "HEAD"), git(self.existing, "rev-parse", "HEAD"))
+        self.assertEqual(git(source, "log", "--format=%H"), git(self.existing, "log", "--format=%H"))
+        backup = Path(result["backup"])
+        self.assertEqual(self.projects / ".backups", backup.parent)
+        self.assertEqual(original, git(backup, "rev-parse", "HEAD"))
+        self.assertEqual("unsaved change\n", (backup / "page.html").read_text())
+        self.assertEqual("do not touch\n", (backup / "untracked.txt").read_text())
+        found = self.manager.discover()
+        self.assertEqual({"Custom name"}, set(found))
+        self.assertEqual("page.html", found["Custom name"].preview)
+        self.assertEqual("Custom name", result["project"])
+
+    def test_failed_replacement_restores_original(self):
+        original = git(self.existing, "rev-parse", "HEAD")
+        before = git(self.existing, "status", "--porcelain")
+        self.remote = self.root / "missing.git"
+        with patch("project_onboarding.subprocess.Popen", side_effect=self.local_transport):
+            result = self.wait_job(self.manager.start("git@host:team/existing.git", replace=True))
+        self.assertEqual("failed", result["state"])
+        self.assertIn("Repository unavailable", result["error"])
+        self.assertIn("Original folder restored", result["error"])
+        self.assertFalse(Path(result["backup"]).exists())
+        self.assertEqual(original, git(self.existing, "rev-parse", "HEAD"))
+        self.assertEqual(before, git(self.existing, "status", "--porcelain"))
+        self.assertEqual("unsaved change\n", (self.existing / "page.html").read_text())
+        self.assertEqual("do not touch\n", (self.existing / "untracked.txt").read_text())
+
+    def test_replace_refuses_panel_checkout_outside_paths_and_active_job(self):
+        url = "git@host:team/existing.git"
+        self.manager.panel_dir = self.existing
+        self.assertFalse(self.manager.preview(url)["canReplace"])
+        with self.assertRaisesRegex(ValueError, "own checkout"):
+            self.manager.start(url, replace=True)
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.projects / "escape").symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "inside"):
+            self.manager.start("git@host:team/escape.git", replace=True)
+        self.manager.panel_dir = self.root / "panel"
+        entered, release = threading.Event(), threading.Event()
+        def blocked(command, **kwargs):
+            entered.set()
+            release.wait(5)
+            return self.local_transport(command, **kwargs)
+        with patch("project_onboarding.subprocess.Popen", side_effect=blocked):
+            job = self.manager.start(url, replace=True)
+            self.assertTrue(entered.wait(5))
+            self.assertNotIn(self.configured.name, self.manager.discover())
+            with self.assertRaisesRegex(ValueError, "Another"):
+                self.manager.start(url, replace=True)
+            release.set()
+            self.assertEqual("complete", self.wait_job(job)["state"])
+
     def test_failed_clone_cleanup_and_retry(self):
         real_remote = self.remote
         self.remote = self.root / "nonexistent.git"

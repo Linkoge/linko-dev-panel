@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {spawn, execFileSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
-import {readFileSync, existsSync} from 'node:fs';
+import {readFileSync, existsSync, writeFileSync, readdirSync} from 'node:fs';
 import {chromium} from 'playwright';
 
 const env = {...process.env, DISPLAY:'', WAYLAND_DISPLAY:'', XAUTHORITY:''};
@@ -57,7 +57,9 @@ try {
   await page.locator('#addProject').click();
   await page.locator('#repositoryUrl').fill('https://git.fixture.invalid/team/empty.git');
   await page.waitForFunction(() => document.querySelector('#cloneStatus').textContent.includes('already exists'));
-  assert.equal(await page.locator('#cloneProject').isDisabled(), true);
+  assert.equal(await page.locator('#cloneProject').isEnabled(), true);
+  assert.equal(await page.locator('#cloneProject').innerText(), 'Replace local copy with GitHub version');
+  await page.locator('#cloneProject').click({noWaitAfter:true});
   await page.locator('#openExistingProject').click();
   assert.equal(readFileSync(`${config.projects}/empty/first.txt`,'utf8'), 'created in browser terminal\n');
   await page.locator('#addProject').click();
@@ -79,6 +81,25 @@ try {
   assert.equal(readFileSync(`${config.projects}/existing/keep.txt`,'utf8'), 'unsaved original\n');
   assert.match(await page.locator('#commits').innerText(), /fixture file/);
   console.log('PASS HTTPS-form nonempty clone, duplicate selection, failed clone cleanup/retry, original project selection/history/files preserved');
+
+  writeFileSync(`${config.projects}/success/local-only.txt`, 'preserve local work');
+  await page.locator('#addProject').click();
+  await page.locator('#repositoryUrl').fill('https://git.fixture.invalid/team/success.git');
+  await page.waitForFunction(() => document.querySelector('#cloneProject').textContent === 'Replace local copy with GitHub version' && !document.querySelector('#cloneProject').disabled);
+  page.once('dialog', async dialog => {
+    assert.match(dialog.message(), /current folder.*moved to a backup/);
+    await dialog.accept();
+  });
+  await page.locator('#cloneProject').click();
+  await page.waitForFunction(() => document.querySelector('#cloneStatus').textContent.includes('Original folder backed up at'));
+  assert.equal(existsSync(`${config.projects}/success/local-only.txt`), false);
+  const backup = readdirSync(`${config.projects}/.backups`).find(name => name.startsWith('success-'));
+  assert.ok(backup);
+  assert.equal(readFileSync(`${config.projects}/.backups/${backup}/local-only.txt`, 'utf8'), 'preserve local work');
+  assert.ok((await page.locator('#cloneStatus').innerText()).includes(backup));
+  await page.locator('#openExistingProject').click();
+  await page.waitForFunction(() => document.querySelector('#project').value === 'success' && !document.querySelector('#addProjectDialog').open);
+  console.log('PASS confirmed replacement, backup preservation, result location and project selection');
 
   await page.setViewportSize({width:390,height:844});
   await page.locator('#addProject').click();
